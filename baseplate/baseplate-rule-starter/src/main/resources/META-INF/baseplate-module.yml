@@ -1,0 +1,27 @@
+id: rule
+display-name: 规则引擎
+version: 1.0.0
+requires: "baseplate-api >=1.0.0,<2.0.0"
+root-package: com.example.baseplate.rule
+enabled-by-default: true
+
+permissions:
+  - { code: "rule:view", label: 查看规则, type: MENU }
+  - { code: "rule:edit", label: 编辑规则, type: BUTTON }
+  - { code: "rule:publish", label: 发布规则, type: BUTTON }
+
+menus:
+  - { path: /rule/config, label: 规则配置, permission: "rule:edit", icon: SetUp }
+
+rule-fields:
+  - { name: creditScore, label: 信用分, type: NUMBER }
+  - { name: orderCount, label: 近30天订单数, type: NUMBER }
+  - { name: region, label: 区域, type: STRING, options: [NORTH, SOUTH, EAST, WEST] }
+
+config-keys:
+  - baseplate.rule.dry-run-enabled
+
+flyway-locations:
+  - classpath:db/migration/rule
+
+openapi-group: rule-v1

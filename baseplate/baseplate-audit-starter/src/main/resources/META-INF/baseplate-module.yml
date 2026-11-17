@@ -1,0 +1,24 @@
+id: audit
+display-name: 审计日志
+version: 1.0.0
+requires: "baseplate-api >=1.0.0,<2.0.0"
+root-package: com.example.baseplate.audit
+enabled-by-default: true
+
+permissions:
+  - { code: "audit:view", label: 查看审计日志, type: MENU }
+
+menus:
+  - { path: /audit/logs, label: 审计日志, permission: "audit:view", icon: Document }
+
+rule-fields:
+  - { name: resultCode, label: 结果码, type: STRING }
+
+config-keys:
+  - baseplate.audit.queue-size
+  - baseplate.audit.retention-days
+
+flyway-locations:
+  - classpath:db/migration/audit
+
+openapi-group: audit-v1

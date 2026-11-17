@@ -1,0 +1,1 @@
+import{a2 as a,b as s,B as e}from"./index-JhrpjV5R.js";const n=a("workflow",{state:()=>({todoCount:0}),actions:{async refreshTodo(){const t=s();if(!t.loggedIn||!t.has("wf:task")){this.todoCount=0;return}try{const{data:o}=await e.get("/api/workflow/tasks/todo",{params:{page:1,size:1}});this.todoCount=o.total||0}catch{}}}});export{n as u};

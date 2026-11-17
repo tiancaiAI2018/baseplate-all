@@ -1,0 +1,57 @@
+spring:
+  application:
+    name: baseplate
+  datasource:
+    url: ${BASEPLATE_DB_URL:jdbc:postgresql://127.0.0.1:5432/baseplate_dev?sslmode=disable}
+    username: ${BASEPLATE_DB_USER:postgres}
+    password: ${BASEPLATE_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+  flyway:
+    enabled: false
+  data:
+    redis:
+      host: ${BASEPLATE_REDIS_HOST:127.0.0.1}
+      port: ${BASEPLATE_REDIS_PORT:6379}
+      password: ${BASEPLATE_REDIS_PASSWORD:}
+      timeout: 3s
+
+baseplate:
+  registry-fail-fast: true
+  migration-plan-path: build/migration-plan.json
+  tenant:
+    mode: shared-column
+  redis:
+    enabled: true
+    fallback-to-memory: true
+    key-prefix: "bp:"
+  security:
+    trace-header: X-Trace-Id
+  identity:
+    default-tenant: default
+    password-expire-enabled: false
+    password-expire-days: 90
+    max-failed-attempts: 5
+    lock-minutes: 15
+  platform:
+    token-ttl: 2h
+    timestamp-window: 5m
+    sandbox-enabled: true
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,ports
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    root: INFO
+    com.example.baseplate: INFO

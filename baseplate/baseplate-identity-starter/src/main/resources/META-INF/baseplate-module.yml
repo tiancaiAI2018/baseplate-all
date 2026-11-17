@@ -1,0 +1,47 @@
+id: identity
+display-name: 身份与权限
+version: 1.0.0
+requires: "baseplate-api >=1.0.0,<2.0.0"
+root-package: com.example.baseplate.identity
+enabled-by-default: true
+
+permissions:
+  - { code: "user:view", label: 查看用户, type: MENU }
+  - { code: "user:create", label: 创建用户, type: BUTTON }
+  - { code: "user:update", label: 编辑用户, type: BUTTON }
+  - { code: "user:delete", label: 停用用户, type: BUTTON }
+  - { code: "user:reset", label: 重置密码, type: BUTTON }
+  - { code: "role:view", label: 查看角色, type: MENU }
+  - { code: "role:create", label: 创建角色, type: BUTTON }
+  - { code: "role:update", label: 编辑角色, type: BUTTON }
+  - { code: "role:delete", label: 删除角色, type: BUTTON }
+  - { code: "role:assign", label: 分配角色与权限, type: BUTTON }
+  - { code: "org:view", label: 查看组织, type: MENU }
+  - { code: "org:create", label: 创建组织, type: BUTTON }
+  - { code: "org:update", label: 编辑组织, type: BUTTON }
+  - { code: "org:delete", label: 删除组织, type: BUTTON }
+
+menus:
+  - { path: /identity/users, label: 用户管理, permission: "user:view", icon: User }
+  - { path: /identity/roles, label: 角色权限, permission: "role:view", icon: Lock }
+  - { path: /identity/orgs, label: 组织架构, permission: "org:view", icon: OfficeBuilding }
+
+data-scopes:
+  - { aggregate: User, dimension: org_id }
+
+rule-fields:
+  - { name: amount, label: 金额, type: NUMBER }
+  - { name: userLevel, label: 用户等级, type: STRING, options: [NORMAL, VIP, SVIP] }
+  - { name: orgId, label: 所属组织, type: NUMBER }
+
+config-keys:
+  - baseplate.identity.password-min-length
+  - baseplate.identity.password-expire-enabled
+  - baseplate.identity.password-expire-days
+  - baseplate.identity.max-failed-attempts
+  - baseplate.identity.lock-minutes
+
+flyway-locations:
+  - classpath:db/migration/identity
+
+openapi-group: identity-v1

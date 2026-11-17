@@ -1,0 +1,36 @@
+id: workflow
+display-name: 工作流
+version: 1.0.0
+requires: "baseplate-api >=1.0.0,<2.0.0"
+root-package: com.example.baseplate.workflow
+enabled-by-default: true
+
+permissions:
+  - { code: "wf:view", label: 查看流程, type: MENU }
+  - { code: "wf:deploy", label: 部署流程, type: BUTTON }
+  - { code: "wf:task", label: 发起与办理流程, type: MENU }
+  - { code: "wf:rollback", label: 流程回退, type: BUTTON }
+  - { code: "wf:manage", label: 流程治理（作废/变更/终止）, type: BUTTON }
+  - { code: "wf:config", label: 配置流程节点, type: BUTTON }
+  - { code: "wf:form", label: 流程表单设计, type: MENU }
+  - { code: "wf:lab", label: 流程演练, type: MENU }
+
+menus:
+  - { path: /workflow/start, label: 发起流程, permission: "wf:task", icon: Promotion }
+  - { path: /workflow/todo, label: 我的待办, permission: "wf:task", icon: Bell }
+  - { path: /workflow/mine, label: 我发起的, permission: "wf:task", icon: Tickets }
+  - { path: /workflow/designer, label: 流程设计, permission: "wf:deploy", icon: Share }
+  - { path: /workflow/forms, label: 流程表单, permission: "wf:form", icon: Grid }
+  - { path: /workflow/lab, label: 流程演练, permission: "wf:lab", icon: SetUp }
+
+data-scopes:
+  - { aggregate: WorkflowInstance, dimension: start_user_id }
+
+config-keys:
+  - baseplate.workflow.variable-json-mapper
+  - baseplate.workflow.xml-script-allowed
+
+flyway-locations:
+  - classpath:db/migration/workflow
+
+openapi-group: workflow-v1

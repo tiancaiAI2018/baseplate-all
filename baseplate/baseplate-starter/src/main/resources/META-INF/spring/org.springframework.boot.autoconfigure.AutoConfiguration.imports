@@ -1,0 +1,5 @@
+com.example.baseplate.runtime.autoconfigure.RuntimeAutoConfiguration
+com.example.baseplate.registry.autoconfigure.ModuleRegistryAutoConfiguration
+com.example.baseplate.adapter.autoconfigure.PersistenceAutoConfiguration
+com.example.baseplate.adapter.autoconfigure.RedisPortsAutoConfiguration
+com.example.baseplate.adapter.autoconfigure.MemoryPortsAutoConfiguration

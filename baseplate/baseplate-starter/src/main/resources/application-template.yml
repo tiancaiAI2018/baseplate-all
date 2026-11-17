@@ -1,0 +1,10 @@
+# 基盘配置模板：所有 baseplate.* 默认值在此，EnvTemplateGuardTest 做双向守卫。
+baseplate:
+  registry-fail-fast: true
+  migration-plan-path: build/migration-plan.json
+  tenant:
+    mode: shared-column
+  redis:
+    enabled: true
+    fallback-to-memory: true
+    key-prefix: "bp:"
