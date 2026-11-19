@@ -8,7 +8,10 @@ import com.example.baseplate.workflow.adapter.out.flowable.FlowableProcessEngine
 import com.example.baseplate.workflow.adapter.out.flowable.NodeConfigCompiler;
 import com.example.baseplate.workflow.adapter.out.flowable.WorkflowOperationLogger;
 import com.example.baseplate.workflow.adapter.out.persistence.WorkflowConfigRepository;
+import com.example.baseplate.workflow.adapter.out.persistence.WorkflowDraftRepository;
 import com.example.baseplate.workflow.application.AssigneeResolver;
+import com.example.baseplate.workflow.application.BpmnDraftComposer;
+import com.example.baseplate.workflow.application.WorkflowDraftService;
 import org.flowable.engine.ProcessEngine;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -60,6 +63,25 @@ public class WorkflowAutoConfiguration {
     public WorkflowConfigRepository workflowConfigRepository(ObjectProvider<DataSource> dataSource) {
         DataSource available = dataSource.getIfAvailable();
         return new WorkflowConfigRepository(available == null ? null : new JdbcTemplate(available));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public BpmnDraftComposer bpmnDraftComposer() {
+        return new BpmnDraftComposer();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public WorkflowDraftRepository workflowDraftRepository(ObjectProvider<DataSource> dataSource) {
+        return new WorkflowDraftRepository(new JdbcTemplate(dataSource.getObject()));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public WorkflowDraftService workflowDraftService(WorkflowDraftRepository repository,
+                                                     BpmnDraftComposer composer) {
+        return new WorkflowDraftService(repository, composer);
     }
 
     @Bean

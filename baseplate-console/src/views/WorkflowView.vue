@@ -17,6 +17,7 @@
       <el-tab-pane label="流程设计" name="design">
         <div class="toolbar">
           <el-input v-model="processKey" placeholder="流程 Key" style="width: 220px" />
+          <el-button :icon="Grid" :loading="layouting" @click="autoLayout">自动排版</el-button>
           <el-button type="primary" @click="openDeploy">部署当前图</el-button>
           <span class="hint">同名 Key 会生成新版本；部署时可决定老实例是否一起迁移。</span>
         </div>
@@ -408,18 +409,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import BpmnModeler from 'bpmn-js/lib/Modeler'
 import BpmnViewer from 'bpmn-js/lib/Viewer'
 import NodeConfigPanel from './NodeConfigPanel.vue'
 import FormRenderer from './FormRenderer.vue'
 import ProcessSettingDialog from '../components/ProcessSettingDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Grid } from '@element-plus/icons-vue'
+import { layoutBpmnXml } from '../utils/bpmnLayout'
+import { bpmnToSpec } from '../utils/bpmnSpec'
+import { registerAgentCanvas } from '../api/agentCanvas'
 import http, { errorText } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const activeTab = ref('design')
 const canvasRef = ref<HTMLElement | null>(null)
 const defChartRef = ref<HTMLElement | null>(null)
@@ -435,6 +442,7 @@ const page = ref(1)
 const size = ref(20)
 const filter = reactive({ state: 'ALL', processKey: '', keyword: '' })
 let modeler: any = null
+let disposeCanvasProvider: (() => void) | null = null
 // 必须是 shallowRef：ref() 会把 bpmn-js 实例包成 reactive 代理，
 // 右侧节点面板拿到的就是代理对象，engine.get('elementRegistry') 内部身份判断失败 → 节点列表永远空
 const designerModel = shallowRef<any>(null)
@@ -450,6 +458,7 @@ let instViewer: any = null
 const deployOpen = ref(false)
 const deployStrategy = ref('KEEP_OLD')
 const deploying = ref(false)
+const layouting = ref(false)
 const defOpen = ref(false)
 const defDetail = ref<any>(null)
 const defVersionId = ref('')
@@ -529,10 +538,10 @@ const DEFAULT_XML = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:endEvent id="End_Approved" name="审批通过" />
     <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="Task_Approve" />
     <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_Approve" targetRef="Gateway_Decision" />
-    <bpmn:sequenceFlow id="Flow_3" sourceRef="Gateway_Decision" targetRef="End_Approved">
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Gateway_Decision" targetRef="End_Approved" name="同意">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">\${decision == 'APPROVE'}</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
-    <bpmn:sequenceFlow id="Flow_4" sourceRef="Gateway_Decision" targetRef="Task_Rework">
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="Gateway_Decision" targetRef="Task_Rework" name="驳回">
       <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">\${decision == 'REJECT'}</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="Flow_5" sourceRef="Task_Rework" targetRef="Task_Approve" />
@@ -706,6 +715,7 @@ const OPERATOR_TEXT: Record<string, string> = {
 }
 function conditionLabel(row: any) {
   const cfg = row.conditionConfig || {}
+  if (cfg.expression) return cfg.expression
   if (!cfg.field) return '无条件（默认分支）'
   return `${cfg.field} ${OPERATOR_TEXT[cfg.operator] || cfg.operator} ${cfg.value}`
 }
@@ -891,6 +901,28 @@ function fitViewport() {
   try { modeler?.get('canvas').zoom('fit-viewport') } catch { /* 尺寸未就绪时忽略 */ }
 }
 
+/**
+ * 自动排版：用 bpmn-auto-layout 重算节点坐标和连线走线。
+ * 只改图形信息（DI），节点 id、属性、条件表达式都不变，
+ * 所以右侧面板配置、部署内容都不受影响，等于流程图的「格式化」。
+ */
+async function autoLayout() {
+  if (!modeler) return
+  layouting.value = true
+  try {
+    const { xml } = await modeler.saveXML({ format: true })
+    const layouted = layoutBpmnXml(xml || '')
+    await modeler.importXML(layouted)
+    fitViewport()
+    panelRef.value?.refreshNodes?.()
+    ElMessage.success('已自动排版，节点属性没有变化')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '自动排版失败')
+  } finally {
+    layouting.value = false
+  }
+}
+
 // 画布增删节点 / 改名后，右侧节点面板要跟着变，否则用户拖完节点看不到它
 let nodeRefreshTimer: any = null
 function bindCanvasEvents() {
@@ -909,6 +941,21 @@ onMounted(async () => {
   await waitCanvasSized(canvasRef.value)
   modeler = new BpmnModeler({ container: canvasRef.value })
   designerModel.value = modeler
+  // AI 助手读取的是画布当前状态（含未保存修改），不是已部署版本
+  disposeCanvasProvider = registerAgentCanvas('workflow/designer', async () => {
+    if (!modeler) return { available: false, error: '画布尚未初始化' }
+    const { xml } = await modeler.saveXML({ format: true })
+    const spec = bpmnToSpec(modeler, processKey.value)
+    return {
+      available: true,
+      data: {
+        processKey: processKey.value,
+        name: spec.name,
+        bpmnXml: xml,
+        spec
+      }
+    }
+  })
   bindCanvasEvents()
   try {
     await modeler.importXML(DEFAULT_XML)
@@ -920,9 +967,118 @@ onMounted(async () => {
   panelRef.value?.refreshNodes?.()
   await refreshAll()
   await loadStartForm()
+  await loadDraftFromQuery()
 })
 
+/**
+ * AI 助手创建草稿后会带 draftId 跳转过来：把服务端编译好的 BPMN 载入画布。
+ * 只载入不部署，用户确认后仍走「部署当前图」。
+ */
+async function loadDraftFromQuery() {
+  const draftId = route.query.draftId
+  if (!draftId) return
+  try {
+    const { data } = await http.get(`/api/workflow/drafts/${draftId}`)
+    processKey.value = data.processKey
+    activeTab.value = 'design'
+    defOpen.value = false
+    await nextTick()
+    await waitCanvasSized(canvasRef.value)
+    await modeler.importXML(data.bpmnXml)
+    fitViewport()
+    panelRef.value?.refreshNodes?.()
+    // 把 AI 生成的节点/连线配置回填到右侧属性面板，用户可以直接看到并继续改
+    const spec = parseSpec(data.spec)
+    if (spec) {
+      panelRef.value?.loadConfigs?.(buildPanelConfigs(spec))
+    }
+    ElMessage.success(`已载入草稿「${data.name || data.processKey}」，确认后点「部署当前图」`)
+    // 清掉 query，避免刷新页面时重复提示
+    router.replace({ path: route.path })
+  } catch (error) {
+    ElMessage.error(errorText(error))
+  }
+}
+
+// 已经停在设计器页面时，AI 只改 query 不会触发 onMounted，必须单独监听
+watch(() => route.query.draftId, (draftId) => {
+  if (draftId) loadDraftFromQuery()
+})
+
+// ==================== AI 草稿 → 属性面板 ====================
+
+function parseSpec(raw: any) {
+  if (!raw) return null
+  try {
+    return typeof raw === 'string' ? JSON.parse(raw) : raw
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 服务端把 AI 的节点配置原样存进 spec。这里转换成 NodeConfigPanel 的同构结构，
+ * 用户打开设计器就能看到找人方式、表单、按钮、超时和分支条件，而不是空面板。
+ */
+function buildPanelConfigs(spec: any) {
+  const result: any[] = []
+  for (const node of Array.isArray(spec.nodes) ? spec.nodes : []) {
+    if (node.type !== 'APPROVAL') continue
+    const config = node.config || {}
+    const assigneeValue = config.assigneeValue || node.assignee || ''
+    const assigneeType = config.assigneeType
+      || (assigneeValue === '${initiator}' ? 'INITIATOR' : assigneeValue ? 'USER' : 'INITIATOR')
+    result.push({
+      nodeId: node.id,
+      nodeName: node.name || node.id,
+      nodeType: 'userTask',
+      assigneeType,
+      assigneeValue,
+      signType: config.signType || 'SINGLE',
+      // AI 可能把数值写成 null/字符串，统一转成数字再交给面板与部署接口
+      signRatio: Number(config.signRatio) || 100,
+      formCode: config.formCode || '',
+      fieldPolicy: config.fieldPolicy || {},
+      decisionConfig: config.decisionConfig || {},
+      triggerConfig: config.triggerConfig || {},
+      conditionConfig: {},
+      timeoutMinutes: Number(config.timeoutMinutes) || 0
+    })
+  }
+  const edges = Array.isArray(spec.edges) ? spec.edges : []
+  edges.forEach((edge: any, index: number) => {
+    // 能拆成单字段就用结构化面板；组合条件/自由表达式原样保留，不能丢
+    const conditionConfig = parseCondition(edge.condition)
+      || (edge.condition ? { expression: String(edge.condition).trim() } : null)
+    if (!conditionConfig) return
+    result.push({
+      nodeId: edge.id || `flow_${index + 1}`,
+      nodeName: edge.name || '',
+      nodeType: 'sequenceFlow',
+      conditionConfig
+    })
+  })
+  return result
+}
+
+/** 把 ${amount >= 5000} 解析成面板的结构化条件；解析不了就不填，XML 里仍保留表达式。 */
+function parseCondition(condition?: string) {
+  if (!condition) return null
+  const text = condition.trim().replace(/^\$\{/, '').replace(/\}$/, '').trim()
+  const match = /^([A-Za-z0-9_.]+)\s*(>=|<=|==|!=|>|<)\s*(.+)$/.exec(text)
+  if (!match) return null
+  const rawValue = match[3].trim().replace(/^['"]|['"]$/g, '')
+  return {
+    field: match[1],
+    operator: match[2],
+    value: rawValue,
+    valueType: /^-?\d+(\.\d+)?$/.test(rawValue) ? 'NUMBER' : 'STRING'
+  }
+}
+
 onBeforeUnmount(() => {
+  disposeCanvasProvider?.()
+  disposeCanvasProvider = null
   if (modeler) modeler.destroy()
   if (defViewer) defViewer.destroy()
   if (instViewer) instViewer.destroy()

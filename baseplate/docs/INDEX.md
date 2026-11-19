@@ -8,13 +8,14 @@
 
 | 我要做的事 | 读这篇 | 关键章节 |
 |---|---|---|
-| 本地把服务跑起来 | [03-getting-started.md](03-getting-started.md) | 全部（短） |
+| 本地把服务跑起来（Windows 一键） | [03-getting-started.md](03-getting-started.md) | 「Windows 一键启动」 |
 | **加一个新的业务模块**（有表、有菜单、有权限、有接口） | [05-business-module.md](05-business-module.md) | 全部，含完整模板 |
 | 加一个内网接口并控制权限 | [05-business-module.md](05-business-module.md) → [08-conventions.md](08-conventions.md) | 「控制器与服务」 |
 | 把接口开放给第三方 | [06-security.md](06-security.md) | 「开放平台」 |
 | 查某个端点要什么权限 | [04-api.md](04-api.md) | 按模块分组的表 |
 | 加一个前端页面 | [07-frontend.md](07-frontend.md) | 「新增页面步骤」 |
-| 改了功能要回归验证 | [09-testing.md](09-testing.md) | 四套脚本 |
+| **给 AI 助手加一个工具 / 技能 / 页面** | [01-architecture.md](01-architecture.md) → [04-api.md](04-api.md) → [07-frontend.md](07-frontend.md) | 「AI 编排层」「智能体」「AI 助手」 |
+| 改了功能要回归验证 | [09-testing.md](09-testing.md) | 脚本与智能体验收 |
 | 排查启动失败 / 诡异现象 | [03-getting-started.md](03-getting-started.md) → [10-gotchas.md](10-gotchas.md) | 排错清单 |
 | 想知道某个目录/文件是干什么的 | [02-directory-map.md](02-directory-map.md) | 全部 |
 | 判断能不能这样改（依赖、分层） | [01-architecture.md](01-architecture.md) | 「依赖规则」 |
@@ -45,9 +46,16 @@
 2. `01-architecture.md` 的「端口清单」— 哪些能力是端口
 3. `10-gotchas.md` 的「安全」小节 — 历史上出过的事故
 
-### 场景 D：只想知道现状
+### 场景 D：要改智能体 / AI 助手
 
-读 `../README.md` 的「现状」表和 `../Baseplate基盘_实现与验证报告.html`。
+1. `01-architecture.md` 的「AI 编排层」— 模块边界、工具分类、页面作用域
+2. `04-api.md` 的「智能体 `/api/agent`」— 对话 SSE、HITL、外部工具回传
+3. `07-frontend.md` 的「AI 助手」— 外部工具注册表、画布读取、UI 卡片
+4. `10-gotchas.md` 的「AI 与智能体」小节 — 恢复流、缓存、卡片渲染的坑
+
+### 场景 E：只想知道现状
+
+读 `../../README.md` 的「现状」表和 [`../../../Baseplate基盘_实现与验证报告.html`](../../../Baseplate基盘_实现与验证报告.html)。
 
 ---
 
@@ -162,11 +170,15 @@ baseplate/                                  ← 后端根（Maven 多模块）
 │       ├── crypto/SecretCipher             ← AES-GCM 加密库里的应用密钥
 │       └── resources/db/migration/platform/
 │
-├── baseplate-workflow-starter/             ← Flowable 8
+├── baseplate-workflow-starter/             ← Flowable 8 + 流程草稿
 │   └── .../workflow/
-│       ├── adapter/FlowableProcessEngineAdapter
+│       ├── adapter/out/flowable/
+│       │   ├── FlowableProcessEngineAdapter ← 部署/发起/办理/驳回/打回
+│       │   ├── NodeConfigCompiler           ← 结构化节点配置 → BPMN 片段
+│       │   └── BpmnXmlValidator             ← 白名单校验（禁脚本条件）
 │       ├── adapter/in/web/WorkflowController
-│       └── BpmnXmlValidator                ← 白名单校验
+│       ├── adapter/in/web/WorkflowDraftController  ← 草稿 CRUD
+│       └── application/BpmnDraftComposer    ← AI 节点/连线 → BPMN + 自动排版
 │
 ├── baseplate-rule-starter/                 ← 结构化规则引擎
 │   └── .../rule/
@@ -176,8 +188,27 @@ baseplate/                                  ← 后端根（Maven 多模块）
 │
 ├── baseplate-metadata-starter/             ← 低代码元数据
 │   └── .../metadata/
-│       ├── MetadataService                 ← FORM/LIST/FLOW 三类，字段白名单
+│       ├── MetadataService                 ← FORM/LIST/FLOW 三类，字段白名单 + 作废标记
 │       └── adapter/in/web/MetadataController
+│
+├── baseplate-agent-starter/                ← 智能体平台
+│   ├── domain/                             ← AgentDefinition / ApprovalMode / ToolType / RiskLevel
+│   ├── application/                        ← AgentChatService（SSE 编排）/ AgentConfigService
+│   │                                          AgentSessionService / SkillIndexService
+│   ├── runtime/                            ← AgentRuntimeFactory / AgentEventMapper / SseEventWriter
+│   ├── model/                              ← ModelProviderFactory（OpenAI 兼容端点）
+│   ├── tool/                               ← ToolRegistry / ToolDescriptor / PlatformTools / HttpApiTool
+│   ├── adapter/in/web/                     ← Chat / Config / Session / Hitl / ExternalCall /
+│   │                                          Skill / ToolDirectory 七组控制器
+│   ├── adapter/out/persistence/            ← 定义/会话/消息/审批/外部调用/技能索引仓储
+│   └── resources/db/migration/agent/       ← agent_* 10 张表
+│
+├── baseplate-agent-workflow-starter/       ← 智能体的工作流与表单工具声明
+│   └── .../agent/workflow/
+│       ├── WorkflowAgentTools              ← 待办/任务详情/流程定义（内部，只读）
+│       ├── WorkflowAgentToolProvider       ← 8 个工作流工具声明
+│       ├── FormAgentTools                  ← 表单列表/详情（内部，只读）
+│       └── FormAgentToolProvider           ← 4 个表单工具声明
 │
 └── baseplate-bootstrap/                    ← 唯一可执行制品
     └── src/main/
@@ -198,16 +229,27 @@ baseplate-console/                          ← 前端（与 baseplate/ 同级�
     ├── App.vue
     ├── style.css                           ← 全局设计系统（CSS 变量 + 通用类）
     ├── api/client.ts                       ← axios 实例、令牌注入、401/403 拦截
+    ├── api/agentStream.ts                  ← 对话 / HITL / 外部工具回传的 SSE 解析
+    ├── api/agentExternal.ts                ← 外部工具前端执行器注册表
+    ├── api/agentCanvas.ts                  ← 页面画布读取器注册表（设计器当前状态）
     ├── stores/auth.ts                      ← 登录态、has(permission)、isSuperAdmin
+    ├── stores/agent.ts                     ← 会话、消息块、外部工具排队、HITL 决策
+    ├── stores/workflow.ts                  ← 待办角标
     ├── router/index.ts                     ← 路由表 + 登录守卫 + 首登改密拦截
-    ├── layout/ConsoleLayout.vue            ← 侧边栏 + 顶栏
-    └── views/                              ← 15 个页面
+    ├── layout/ConsoleLayout.vue            ← 侧边栏 + 顶栏 + 悬浮助手
+    ├── components/agent/                   ← AgentAssistant / AgentMarkdown / AgentBpmnCard
+    │                                          formRuleBuilder / schemaField / SchemaFieldEditor
+    ├── utils/bpmnLayout.ts                 ← dagre 自动排版
+    ├── utils/bpmnSpec.ts                   ← 画布 → 节点/连线 spec
+    └── views/                              ← 22 个页面
         ├── LoginView.vue / ChangePasswordView.vue / OAuthAuthorizeView.vue
-        ├── DashboardView.vue
+        ├── DashboardView.vue / AuditView.vue / RulesView.vue / MetadataView.vue
         ├── UsersView.vue / RolesView.vue / OrgsView.vue
         ├── OpenAppsView.vue / ApiCatalogView.vue
-        ├── AuditView.vue
-        ├── RulesView.vue / MetadataView.vue / WorkflowView.vue
+        ├── WorkflowView.vue / NodeConfigPanel.vue / WorkflowLabView.vue
+        ├── ProcessStartView.vue / MyTodoView.vue / MyInstancesView.vue
+        ├── FormListView.vue / FormDesignerView.vue / FormRenderer.vue
+        └── AgentConfigView.vue
 ```
 
 ---
@@ -228,6 +270,12 @@ baseplate-console/                          ← 前端（与 baseplate/ 同级�
 | 改前端主题色 | `baseplate-console/src/style.css` 顶部的 CSS 变量 |
 | 改审计保留策略 | `baseplate-audit-starter/.../AuditWriter`（队列容量）+ 表清理脚本 |
 | 改前端页面标题/菜单分组 | `baseplate-console/src/layout/ConsoleLayout.vue` |
+| 加一个智能体工具 | `baseplate-agent-workflow-starter/.../*ToolProvider`（声明）+ `*Tools`（内部实现）+ `baseplate-console/src/api/agentExternal.ts`（外部执行器） |
+| 改智能体提示词 / 页面绑定 | `baseplate-agent-starter/.../runtime/AgentRuntimeFactory` + 控制台「智能体配置」页 |
+| 改 AI 消息卡片 | `baseplate-console/src/components/agent/AgentAssistant.vue`（`ui` 分支）+ `AgentBpmnCard.vue` |
+| 改待办 / 办理工具 | `WorkflowAgentTools`（内部查询）+ `WorkflowAgentToolProvider`（外部办理） |
+| 改画布读取范围 | 设计器页的 `registerAgentCanvas` + `baseplate-console/src/api/agentCanvas.ts` |
+| 改 Windows 启动方式 | 根目录 `start-*.cmd` + `scripts/dev-server.ps1` |
 
 ---
 
@@ -244,6 +292,14 @@ baseplate-console/                          ← 前端（与 baseplate/ 同级�
 | **数据范围（DataScope）** | 行级数据权限，显式下传，不做隐式织入 |
 | **首登改密** | 管理员初始化或重置密码后，用户首次登录必须改密才能做别的 |
 | **沙盒** | 开放平台独立租户前缀 `sandbox:`，不写生产数据 |
+| **智能体（Agent）** | 绑定在页面上、带模型与工具集的助手；定义、工具、技能、会话都落库 |
+| **内部工具** | 服务端直接执行、只读查询，按用户权限点过滤 |
+| **外部工具** | 前端执行：服务端只下发 schema 与参数，浏览器带用户令牌调业务接口 |
+| **技能（Skill）** | `baseplate/skills/<名称>/SKILL.md`，按 Agent 绑定后作为提示词/能力扩展 |
+| **页面作用域（pageKey）** | 工具、Agent、会话都按页面过滤；换页继续旧会话时要同步 `session.page_key` |
+| **HITL** | Human-in-the-loop：审批策略为 `ASK` 的工具先挂起，用户同意后恢复同一会话 |
+| **UI 卡片** | 工具结果里的 `ui` 指令，经 `ui` SSE 事件交给前端渲染（任务列表 / 流程图缩略图） |
+| **流程草稿** | `wf_process_draft`：AI 或设计器保存的节点/连线，未部署，可再次打开修改 |
 
 ---
 
@@ -254,6 +310,9 @@ baseplate-console/                          ← 前端（与 baseplate/ 同级�
 | 代码变更 | 要改的文档 |
 |---|---|
 | 新增/删除 REST 端点 | `04-api.md` |
+| 新增/修改智能体工具 | `../README.md` 工具表 + `04-api.md` + `07-frontend.md`（外部执行器/卡片） |
+| 新增智能体端点或 SSE 事件 | `04-api.md` 的「智能体」章节 |
+| 新增 agent 相关环境变量 | `03-getting-started.md`（配置表）+ `../README.md`（启动命令） |
 | 模块清单新增字段 | `01-architecture.md`（清单字段表）+ `05-business-module.md`（模板） |
 | 新增端口或适配器 | `01-architecture.md`（端口清单） |
 | 新增环境变量 | `03-getting-started.md`（配置表）+ `../README.md`（启动命令） |

@@ -29,8 +29,10 @@ const router = createRouter({
         { path: 'workflow/todo', component: () => import('../views/MyTodoView.vue'), meta: { title: '我的待办' } },
         { path: 'workflow/mine', component: () => import('../views/MyInstancesView.vue'), meta: { title: '我发起的' } },
         { path: 'workflow/designer', component: () => import('../views/WorkflowView.vue'), meta: { title: '工作流' } },
-        { path: 'workflow/forms', component: () => import('../views/FormDesignerView.vue'), meta: { title: '流程表单' } },
-        { path: 'workflow/lab', component: () => import('../views/WorkflowLabView.vue'), meta: { title: '流程演练' } }
+        { path: 'workflow/forms', component: () => import('../views/FormListView.vue'), meta: { title: '流程表单' } },
+        { path: 'workflow/forms/design', component: () => import('../views/FormDesignerView.vue'), meta: { title: '表单设计' } },
+        { path: 'workflow/lab', component: () => import('../views/WorkflowLabView.vue'), meta: { title: '流程演练' } },
+        { path: 'agent/config', component: () => import('../views/AgentConfigView.vue'), meta: { title: '智能体配置' } }
       ]
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' }

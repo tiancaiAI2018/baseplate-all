@@ -486,7 +486,102 @@ bpmn-js 抛 `SVGMatrix ... non-finite`。
 
 ---
 
-## 九、通用经验
+## 九、AI 与智能体
+
+### 50. system prompt 里拼「可用工具」列表，前缀缓存全失效
+
+**现象**：每加/删/绑定一个工具，首 token 明显变慢，厂商侧前缀缓存命中率跌到 0。
+
+**根因**：工具列表随 Agent、页面、权限变化，而它被拼在 system prompt 里；前缀一变，缓存全废。
+
+**做法**：工具 schema 已经由 toolkit 暴露给模型，system prompt 只保留角色、页面边界和失败提示
+（`AgentRuntimeFactory.systemPrompt`）。不要在提示词里重复工具清单。
+
+### 51. 换页继续旧会话，恢复流报 `Tool not found`
+
+**现象**：在 A 页面发起对话，切到 B 页面继续同一会话，模型调用工具后恢复流报
+`Tool not found: workflow_create_draft`。
+
+**根因**：首次对话按 A 页面的 `pageKey` 注册工具，恢复流却用 `session.page_key` 重建 Agent；
+旧会话的 pageKey 还是 A。
+
+**做法**：`resolveSession` 继续会话时把 `agent_session.page_key` 同步为当前页面（`syncPageKey`）。
+否则「工具调用成功、恢复时找不到」会一直复现。
+
+### 52. 外部工具执行太快，结果被静默丢掉
+
+**现象**：外部工具立刻返回 400，对话停在「执行失败」，模型永远收不到失败原因。
+
+**根因**：SSE 流还没结束时提交结果，会和正在进行的流抢同一个会话，服务端直接拒绝或覆盖。
+
+**做法**：前端 `stores/agent.ts` 用 `pendingExternal` 排队，流结束后 `flushPendingExternal`
+逐个回传；每次回传会开启新的流。
+
+### 53. UI 卡片字段不能叫 `type`
+
+**现象**：前端 `switch (event.type)` 不认 `ui` 事件，任务卡/流程图卡片不渲染。
+
+**根因**：`SseEventWriter` 先写 `type=事件名`，再 `putAll(data)`；ui 负载里的 `type` 会把事件名覆盖掉。
+
+**做法**：卡片子类型用 `kind`（`task_list` / `workflow_preview`），不要用 `type`。
+
+### 54. UI 数据塞进模型上下文，白烧 token
+
+**现象**：读取当前画布后，整段 BPMN XML 被回传给模型，上下文暴涨，回答质量反而下降。
+
+**根因**：外部工具结果原样作为 `ToolResultBlock` 文本交给模型。
+
+**做法**：`resumeExternal` 单独推 `ui` 事件并写入历史块；`resultText` 用 `stripUi` 把 `ui` 从模型上下文剔除。
+大 XML 只给前端卡片用。
+
+### 55. Jackson 3 把 null 映射到 int 直接 400
+
+**现象**：AI 生成节点配置时没填 `signRatio` / `timeoutMinutes`，保存草稿报
+`Cannot map null into type int`。
+
+**根因**：DTO 用了基本类型 `int`，Jackson 3 默认拒绝 null。
+
+**做法**：可空数值一律用 `Integer`，构造器里兜底；前端提交前用 `Number()` 归一。
+
+### 56. BPMN 条件里出现字面量 `%n`
+
+**现象**：条件表达式里带了 `%n`，分支永远不成立，流程走默认出线。
+
+**根因**：字符串拼接后才调用 `formatted`，只作用于后半段。
+
+**做法**：整段用括号包住再格式化。条件只接受 JUEL 表达式（`${...}`），
+带 `language=` 的脚本表达式由 `BpmnXmlValidator` 直接拒绝。
+
+### 57. 自动排版把流程排成竖直单列
+
+**现象**：点「自动排版」后节点从上到下一列，回退边还参与分层。
+
+**根因**：`bpmn-auto-layout` 默认纵向，并把回退边当普通边。
+
+**做法**：用 `@dagrejs/dagre` 做 LR 分层；回退边不参与分层、从节点下方绕行；
+只改 DI 坐标，不动业务元素。
+
+### 58. Windows 启动脚本中文乱码，`start` 被拆成 `rt`
+
+**现象**：运行 `start-all.cmd` 报一串乱码命令，再加 `'rt' 不是内部或外部命令`。
+
+**根因**：cmd 按系统 GBK 代码页解析批处理文件；`.cmd` 里的 UTF-8 中文把命令行拆坏，
+`start` 只剩 `rt`。中途 `chcp 65001` 还会让 cmd 的文件偏移错位。
+
+**做法**：`.cmd` 只放 ASCII；中文提示放 `.ps1`，并保存为 UTF-8 with BOM。
+
+### 59. 新加的工具模型看不到：页面 / 权限 / 绑定三层过滤
+
+**现象**：工具代码已经注册，但对话里模型就是不用。
+
+**根因**：`selectTools` 依次过滤：`descriptor.pages` 是否匹配当前页、用户是否具备
+`permissionCode`、Agent 是否绑定；代码声明的内置工具未绑定时默认启用，自定义工具必须有绑定。
+
+**做法**：先看页面 key 是否写对，再看用户权限点，最后看控制台「智能体配置 → 工具」里的启停与审批策略。
+
+---
+
+## 十、通用经验
 
 不是具体 bug，是排查方法。
 

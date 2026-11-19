@@ -8,22 +8,22 @@
 
 ## 一、验证资产全景
 
-| 脚本 | 位置 | 断言数 | 覆盖什么 |
+| 脚本 | 位置（相对 `baseplate/`） | 断言数 | 覆盖什么 |
 |---|---|---|---|
-| `e2e.py` | `../build/e2e.py` | 36 | 全链路：登录→首登改密→用户/角色/组织→开放平台→规则→低代码→BPMN→审计 |
-| `verify_v2.py` | `../build/verify_v2.py` | 35 | 权限目录 CRUD、审计详情、接口目录 CRUD、工作流查询 |
-| `verify_openapi.py` | `../build/verify_openapi.py` | 24 | 注解目录、主体区分、授权码全链路、refresh 轮换、越权拒绝 |
-| `verify_lock.py` | `../build/verify_lock.py` | 14 | 账号锁定/解锁、重置后立刻改密、演示账号 alice 基线不变 |
-| `verify_workflow.py` | `../build/verify_workflow.py` | 48 | 流程全版本、无 DI 补图、已结束实例详情、驳回分支与打回次数、作废只挡新实例、迁移预检/执行/整体拒绝、终止 |
-| `verify_workflow_platform.py` | `../build/verify_workflow_platform.py` | 38 | 节点配置按版本落库、找人逻辑、会签 60%、网关两分支、决策必填原因、表单绑定与回填、素材库、跨租户隔离 |
-| `check.mjs` | `../build/ui-check/check.mjs` | 30 张截图 | 逐页渲染 + console/pageerror 收集 |
-| `openapi-check.mjs` | `../build/ui-check/openapi-check.mjs` | 7 张截图 | 开放平台专题页 + 点同意后的真实跳转 |
-| `workflow-check.mjs` | `../build/ui-check/workflow-check.mjs` | 5 张截图 | 部署策略弹窗、定义详情图、实例详情图、打回实例红色高亮 |
-| `lock-check.mjs` | `../build/ui-check/lock-check.mjs` | 1 张截图 | 用户管理页的「已锁定 / 待改密 / 解锁」状态 |
-| `platform-check.mjs` | `../build/ui-check/platform-check.mjs` | 26 条断言 / 12 张截图 | 拖拽表单设计器能出控件、节点属性面板逐节点配置、定义详情节点配置表、编辑带回画布、演练页跑通完整链路 |
-| `linkage-check.mjs` | `../build/ui-check/linkage-check.mjs` | 10 条断言 / 3 张截图 | 设计页画布 ⇄ 节点面板双向联动：点列表画布亮出选中框并滚过去，点画布面板自动选中对应行，切换选择互斥 |
-| `perf-check.mjs` | `../build/ui-check/perf-check.mjs` | 7 条断言 | 首页性能回归：不再请求 definitions、走 overview、最慢接口 <800ms、把 overview 故意拖慢 3 秒其它卡片照常渲染 |
-| `verify-docs.py` | `../build/verify-docs.py` | 5 组 | **文档与代码一致性**：md 互引、端点集合、关键文件路径 |
+| `e2e.py` | `../../build/e2e.py` | 36 | 全链路：登录→首登改密→用户/角色/组织→开放平台→规则→低代码→BPMN→审计 |
+| `verify_v2.py` | `../../build/verify_v2.py` | 35 | 权限目录 CRUD、审计详情、接口目录 CRUD、工作流查询 |
+| `verify_openapi.py` | `../../build/verify_openapi.py` | 24 | 注解目录、主体区分、授权码全链路、refresh 轮换、越权拒绝 |
+| `verify_lock.py` | `../../build/verify_lock.py` | 14 | 账号锁定/解锁、重置后立刻改密、演示账号 alice 基线不变 |
+| `verify_workflow.py` | `../../build/verify_workflow.py` | 48 | 流程全版本、无 DI 补图、已结束实例详情、驳回分支与打回次数、作废只挡新实例、迁移预检/执行/整体拒绝、终止 |
+| `verify_workflow_platform.py` | `../../build/verify_workflow_platform.py` | 38 | 节点配置按版本落库、找人逻辑、会签 60%、网关两分支、决策必填原因、表单绑定与回填、素材库、跨租户隔离 |
+| `check.mjs` | `../../build/ui-check/check.mjs` | 30 张截图 | 逐页渲染 + console/pageerror 收集 |
+| `openapi-check.mjs` | `../../build/ui-check/openapi-check.mjs` | 7 张截图 | 开放平台专题页 + 点同意后的真实跳转 |
+| `workflow-check.mjs` | `../../build/ui-check/workflow-check.mjs` | 5 张截图 | 部署策略弹窗、定义详情图、实例详情图、打回实例红色高亮 |
+| `lock-check.mjs` | `../../build/ui-check/lock-check.mjs` | 1 张截图 | 用户管理页的「已锁定 / 待改密 / 解锁」状态 |
+| `platform-check.mjs` | `../../build/ui-check/platform-check.mjs` | 26 条断言 / 12 张截图 | 拖拽表单设计器能出控件、节点属性面板逐节点配置、定义详情节点配置表、编辑带回画布、演练页跑通完整链路 |
+| `linkage-check.mjs` | `../../build/ui-check/linkage-check.mjs` | 10 条断言 / 3 张截图 | 设计页画布 ⇄ 节点面板双向联动：点列表画布亮出选中框并滚过去，点画布面板自动选中对应行，切换选择互斥 |
+| `perf-check.mjs` | `../../build/ui-check/perf-check.mjs` | 7 条断言 | 首页性能回归：不再请求 definitions、走 overview、最慢接口 <800ms、把 overview 故意拖慢 3 秒其它卡片照常渲染 |
+| `verify-docs.py` | `../../build/verify-docs.py` | 5 组 | **文档与代码一致性**：md 互引、端点集合、关键文件路径 |
 
 > 脚本都在 `创意/build/`，不在 `baseplate/`。原因：它们最初是给同一个工作区里多个项目共用的。
 
@@ -100,6 +100,26 @@ python build/verify-docs.py
 
 输出约定：每条 `PASS` / `FAIL`，末尾 `==== n/m passed ====`。
 脚本自带清理（会删掉自己创建的应用）。退出码非 0 表示有失败。
+
+### 智能体怎么验（当前无脚本，按清单手工验）
+
+目前 `build/` 下没有 `verify_agent.py`。改完智能体相关代码，至少按下面顺序过一遍：
+
+| # | 操作 | 期望 |
+|---|---|---|
+| 1 | 启动日志 | `智能体工具注册完成: 14 个`；数量对不上说明 provider 没被扫描或工具重名 |
+| 2 | `GET /api/agent/definitions` | 返回定义；模型密钥字段不出现 |
+| 3 | `GET /api/agent/definitions/{id}/tools` | 14 个工具都在；内置工具 `editable=false` |
+| 4 | 流程图页问「我有哪些待办」 | SSE 出现 `tool_call → tool_result → ui`；消息里出现任务卡片 |
+| 5 | 流程设计器问「看看我现在画的流程」 | 出现 `external_tool_call`，前端执行后回传，再出现 `ui` 和 `workflow_preview` 卡片 |
+| 6 | 表单设计器问「看看我当前这个表单」 | `external_tool_call` 返回 `code/name/fields`；字段与画布一致 |
+| 7 | 「帮我同意第一条待办」 | 先 `workflow_list_my_tasks`、再 `workflow_task_detail`、最后 `workflow_complete_task`；待办列表自动刷新 |
+| 8 | 把某工具审批策略设为 `ASK` 后触发 | 流停住并出现 HITL 卡；同意后同一气泡继续 |
+| 9 | 换页继续旧会话 | 不报 `Tool not found`；`agent_session.page_key` 已更新为当前页面 |
+| 10 | 恢复流（刷新页面后继续） | 历史里的 `ui` 卡片、HITL 审批卡能重新出现 |
+
+> 自动化脚本可以照 `verify_workflow.py` 的 harness 写：用 `requests` 流式读取 SSE，
+> 断言事件序列（`tool_call` → `external_tool_call` → `ui`），再断言话题/卡片字段。
 
 ### 截图产物
 

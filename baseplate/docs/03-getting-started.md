@@ -34,10 +34,14 @@
 | `BASEPLATE_OPEN_TOKEN_SECRET` | `local-dev-open-token-secret` | 生产必改 | **开放平台令牌密钥，必须与上一个不同** |
 | `BASEPLATE_SECRET_KEY` | `local-dev-only-change-me-secret-key` | 生产必改 | AES-GCM 密钥，用于加密库里的应用 client_secret |
 | `BASEPLATE_ADMIN_PASSWORD` | `Admin@12345` | | 首次启动创建 admin 时用的初始密码 |
+| `BASEPLATE_AGENT_MODEL` | 空 | | 首次启动写入智能体种子配置的模型名，如 `MiniMax-M3.1-Flash` |
+| `BASEPLATE_AGENT_BASE_URL` | 空 | | OpenAI 兼容端点，如 `https://api.minimax.cn/v1` |
+| `BASEPLATE_AGENT_API_KEY` | 空 | | 模型调用密钥；只在首次种子写入时使用，之后以控制台保存的配置为准 |
 
 > 后三个密钥生产环境用 `openssl rand -hex 32` 生成，且**不能共用**。
 > `JWT_SECRET` 与 `OPEN_TOKEN_SECRET` 相同时，`openTokenSecretGuard` 会在启动期抛异常。
 > `SECRET_KEY` 换掉后，库里已加密的 client_secret 全部解不开，等于所有应用要轮换密钥。
+> 智能体模型密钥不会回显到前端；控制台只返回模型名与端点，密钥保存后不再展示。
 
 ### 配置文件
 
@@ -93,6 +97,29 @@ mvn -DskipTests compile
 
 ## 四、启动
 
+### Windows 一键启动（推荐）
+
+仓库根目录（`baseplate-all/`）已提供前台启动脚本：
+
+```bat
+start-all.cmd        :: 前后端各开一个窗口
+start-backend.cmd    :: 只启后端（8080）
+start-frontend.cmd   :: 只启前端（5173）
+```
+
+这三个脚本最终都调用 `scripts/dev-server.ps1`，行为固定：
+
+| 行为 | 说明 |
+|---|---|
+| 前台运行 | Ctrl+C 或关闭窗口即退出，不会留下后台进程 |
+| 读 `.env` | 只注入当前进程环境，不改系统变量 |
+| 自动找工具 | `JAVA_HOME` → PATH → `%USERPROFILE%\.jdks\*`；Maven 同理 |
+| 自动补齐 | 没有 jar 时打包；没有 `node_modules` 时 `npm install` |
+| 自检 | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-server.ps1 -Target backend -DryRun` |
+
+> `.cmd` 文件必须是**纯 ASCII**：cmd 按系统 GBK 代码页解析批处理，文件里有 UTF-8 中文会把 `start` 命令拆坏。
+> 中文提示统一由 PowerShell 脚本输出（`.ps1` 保存为 UTF-8 BOM）。
+
 ### 首次启动（要跑迁移）
 
 ```bash
@@ -102,7 +129,8 @@ classpath:db/migration/audit,\
 classpath:db/migration/platform,\
 classpath:db/migration/metadata,\
 classpath:db/migration/rule,\
-classpath:db/migration/workflow"
+classpath:db/migration/workflow,\
+classpath:db/migration/agent"
 
 java -jar baseplate-bootstrap/target/baseplate-bootstrap-1.0.0-SNAPSHOT.jar \
   --spring.flyway.enabled=true \
@@ -112,10 +140,13 @@ java -jar baseplate-bootstrap/target/baseplate-bootstrap-1.0.0-SNAPSHOT.jar \
 启动日志里应该看到：
 
 ```
-Successfully applied 13 migrations to schema "public", now at version v20261110170000
-权限目录已同步：6 个模块，31 个权限点
+Successfully validated 21 migrations
+当前版本 ... 20261118170000
+权限目录已同步：7 个模块，40 个权限点
 开放接口目录已同步：4 条（注解 4 条，手工 0 条）
-Started BootstrapApplication in 12.3 seconds
+技能目录扫描完成: 3 个
+智能体工具注册完成: 14 个
+Started BootstrapApplication in 13.5 seconds
 ```
 
 ### 日常启动（不跑迁移）
@@ -128,13 +159,14 @@ java -jar baseplate-bootstrap/target/baseplate-bootstrap-1.0.0-SNAPSHOT.jar
 
 ```bash
 bash run-server.sh --server.port=18081            # 日常启动
-bash run-server.sh --server.port=18081 --migrate  # 带 Flyway 全量迁移（含 workflow 目录）
+bash run-server.sh --server.port=18081 --migrate  # 带 Flyway 全量迁移
 ```
 
-`--migrate` 等价于上面那串 `--spring.flyway.*` 参数，模块目录一次性带全，避免手抄漏掉 `workflow`。
-它从 `../村通/03_后端开发/cuntong-server/.env` 读连接信息，把库名替换成 `baseplate_dev`，并补 `sslmode=disable`。
+`--migrate` 等价于上面那串 `--spring.flyway.*` 参数。
+它是旧的 Linux/macOS 脚本，仍从 `../村通/03_后端开发/cuntong-server/.env` 读 `CT_*` 变量；
+当前工作区请优先用根目录 `.env` + `start-*.cmd`。
 
-> 漏掉 `workflow` 迁移目录时，`wf_operation_log` 不建表；流程本身能跑，但驳回原因、打回次数、作废/迁移的操作人全部记不下来（写入是旁路，不会报错）。
+> 漏掉 `workflow` 迁移目录时，`wf_operation_log` 不建表；漏掉 `agent` 迁移目录时 `agent_*` 表不存在，助手一打开就 500。
 换成别的机器这个脚本就跑不了，用环境变量方式。
 
 ### 健康检查
@@ -220,6 +252,18 @@ Spring Framework 7 移除了「只有 `@RequestMapping` 就算控制器」的行
 ### 8. Flyway 完全不执行且没有报错
 
 Boot 4 把 Flyway 拆到了独立模块，只引 `flyway-core` 不会激活自动配置，必须引 `spring-boot-flyway`。
+
+### 9. Windows 双击启动脚本，报 `'xxx' 不是内部或外部命令` / `'rt' 不是…`
+
+cmd 按系统 GBK 代码页逐行解析批处理文件。`.cmd` 里如果有 UTF-8 中文（尤其是 `start "标题"`），
+多字节字符会把命令行拆坏，表现为一个乱码命令加一个 `'rt'`（`start` 的残片）。
+
+解决：`.cmd` 只放 ASCII；中文提示放到 `.ps1`，并保存为 **UTF-8 with BOM**。
+
+### 10. PowerShell 脚本中文乱码，或报「字符串缺少终止符」
+
+Windows PowerShell 5 读取**无 BOM** 的 `.ps1` 时按 ANSI（GBK）解码，UTF-8 中文会被拆成非法字符，
+甚至把注释里的字节拼成引号，导致语法错误。用编辑器另存为「UTF-8 with BOM」即可。
 
 ---
 

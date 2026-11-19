@@ -71,11 +71,11 @@ public OpenApiAuthFilter(..., UserDirectory userDirectory) { ... }
 
 ---
 
-## 三、16 个模块的职责
+## 三、18 个模块的职责
 
 | 模块 | 职责 | 有代码? |
 |---|---|---|
-| `baseplate-api` | 端口、模型、注解、异常。**内核契约** | 47 个类 |
+| `baseplate-api` | 端口、模型、注解、异常。**内核契约** | 59 个类 |
 | `baseplate-domain` | 共享领域原语 | 1 个（`AggregateRoot`） |
 | `baseplate-application` | 预留的跨模块应用服务位 | 空（只有 `package-info`） |
 | `baseplate-runtime` | 端口注册表、配置解密、租户上下文、`baseplate.*` 配置 | 9 |
@@ -87,13 +87,41 @@ public OpenApiAuthFilter(..., UserDirectory userDirectory) { ... }
 | `baseplate-identity-starter` | 用户/角色/组织/权限目录、登录、密码策略 | 23 |
 | `baseplate-audit-starter` | 访问/业务/登录三类审计 + 查询接口 | 5 |
 | `baseplate-platform-starter` | 开放平台：双凭证、注解暴露、主体区分、授权码 | 21 |
-| `baseplate-workflow-starter` | Flowable 8 封装（BPMN 校验、部署、发起、办理） | 5 |
+| `baseplate-workflow-starter` | Flowable 8 封装（BPMN 校验、部署、发起、办理、草稿、节点配置编译） | 17 |
 | `baseplate-rule-starter` | 结构化规则引擎（字段+运算符+值） | 10 |
-| `baseplate-metadata-starter` | 低代码元数据（FORM/LIST/FLOW 三类 Schema） | 3 |
+| `baseplate-metadata-starter` | 低代码元数据（FORM/LIST/FLOW 三类 Schema + 作废） | 3 |
+| `baseplate-agent-starter` | 智能体平台：定义/会话/工具/技能/HITL/外部调用/SSE | 38 |
+| `baseplate-agent-workflow-starter` | 智能体的工作流与表单工具声明和服务端只读实现 | 5 |
 | `baseplate-bootstrap` | 唯一可执行制品，内嵌前端静态资源 | 3 |
 
 > `baseplate-application` 与 `baseplate-starter` 目前**没有实际逻辑**。前者是留给将来跨模块编排的位置，
 > 后者只是把依赖打包给业务方。不要往这两个地方塞业务代码。
+
+### AI 编排层
+
+智能体没有塞进业务模块，而是独立成两层，避免「AI 逻辑污染工作流内核」：
+
+```
+baseplate-agent-starter                 智能体平台（不知道工作流/表单的存在）
+  ├─ AgentChatService                   SSE 编排：会话、事件映射、落库、HITL/外部调用恢复
+  ├─ AgentConfigService                 定义、工具绑定、技能绑定、页面过滤
+  ├─ AgentRuntimeFactory                按「Agent 配置 + 页面 + 工具集 + 技能集」构建并缓存 ReActAgent
+  ├─ ToolRegistry                       收集所有 AgentToolProvider，重名直接启动失败
+  ├─ ModelProviderFactory               OpenAI 兼容端点（MiniMax / DeepSeek 等），配置从库里读
+  └─ SkillIndexService                  skills/<名称>/SKILL.md 扫描、索引、在线编辑
+
+baseplate-agent-workflow-starter          业务工具层（只声明工具，不持有会话）
+  ├─ WorkflowAgentTools                 内部只读：流程定义、草稿、我的待办、任务详情
+  ├─ WorkflowAgentToolProvider          8 个工作流工具（含外部：创建草稿、读画布、同意/驳回、打回）
+  ├─ FormAgentTools                     内部只读：表单列表、表单详情
+  └─ FormAgentToolProvider              4 个表单工具（含外部：读当前表单、创建设计草稿）
+```
+
+三条边界：
+
+1. **Agent 平台不认识业务**：`baseplate-agent-starter` 只认 `AgentToolProvider` 接口，业务工具通过 starter 反向注册。
+2. **写操作走外部工具**：服务端只下发 schema 和参数，前端带用户令牌调业务 REST；权限、审计、数据归属校验不绕过。
+3. **页面作用域贯穿三层**：Agent 绑定页面 → 工具声明页面 → 会话记录页面；继续旧会话时同步 `page_key`，否则恢复流会找不到工具。
 
 ---
 
@@ -154,8 +182,13 @@ rule-fields:
 6. 各能力 starter 的 ApplicationRunner/SmartInitializingSingleton 再做自己的初始化
    ├─ PermissionCatalogRepository.sync   权限点 → sys_permission（人工改过的不覆盖）
    ├─ OpenApiCatalogRepository.ensureCatalog  @OpenApi 扫描结果 → open_api（人工改过的不覆盖）
+   ├─ SkillIndexService.scan             skills/<名称>/SKILL.md → agent_skill_index
+   ├─ AgentConfigService.seedDefaultIfAbsent  首次启动用 .env 模型配置建默认 Agent
    └─ AdminSeeder                        首次启动建 admin 与 SUPER_ADMIN 角色
 ```
+
+`ToolRegistry` 在 Bean 构造期就收集全部 `AgentToolProvider`，工具编码重复会直接启动失败——
+这比让模型随机调到一个错误实现要好。
 
 **顺序很重要**：清单扫描发生在 `ApplicationRunner` 之前，所以权限目录同步一定拿得到完整模块列表。
 

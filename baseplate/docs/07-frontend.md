@@ -13,9 +13,11 @@
 | 框架 | Vue 3（`<script setup>` + TS） | |
 | 构建 | Vite | |
 | UI | Element Plus + `@element-plus/icons-vue` | |
-| 状态 | Pinia | 只有一个 `auth` store |
+| 状态 | Pinia | `auth` / `agent` / `workflow` 三个 store |
 | 路由 | vue-router，**hash 模式** | 因为要和后端同一个 jar，没有 history fallback |
-| 流程图 | bpmn-js | 只在 `WorkflowView.vue` 用 |
+| 流程图 | bpmn-js | 设计器用 `Modeler`，详情/卡片用 `Viewer` |
+| 表单 | form-create + `@form-create/designer` | 表单设计器与只读渲染共用同一套规则 |
+| 自动排版 | `@dagrejs/dagre` | 左侧到右侧分层；回退边从节点下方绕行 |
 
 目录在 `../baseplate-console`（与 `baseplate/` 同级）。
 
@@ -180,6 +182,84 @@ try {
 - `401` → 清 token，`location.hash = '#/login'`
 - `403` 且 `code === 'PASSWORD_CHANGE_REQUIRED'` → 跳 `#/change-password`
 
+### 智能体相关的 API 模块
+
+| 文件 | 职责 |
+|---|---|
+| `api/agentStream.ts` | `POST + fetch` 解析 SSE（EventSource 只支持 GET，且不能带 Authorization）；对话 / HITL / 外部结果三个入口 |
+| `api/agentExternal.ts` | 外部工具执行器注册表：`toolCode → handler`，页面按需注册，未注册的工具停在「等待页面处理」 |
+| `api/agentCanvas.ts` | 画布读取器注册表：设计器挂载时注册、卸载时注销，助手按 `pageKey` 读取当前未保存内容 |
+
+---
+
+## 三之二、AI 助手
+
+悬浮入口在 [ConsoleLayout.vue](../../baseplate-console/src/layout/ConsoleLayout.vue)，按 `pageKey` 调
+`/api/agent/chat/bootstrap` 决定是否显示；状态在 `stores/agent.ts`。
+
+### 消息块
+
+后端 SSE 事件被映射成消息块，`AgentAssistant.vue` 按类型渲染：
+
+| block.type | 渲染 |
+|---|---|
+| `text` | `AgentMarkdown`（markdown-it + DOMPurify + highlight.js） |
+| `thinking` | 可折叠「思考过程」 |
+| `tool_call` / `tool_result` | 工具 chip，成功/失败着色 |
+| `skill` | 「使用技能：xxx」标签 |
+| `hitl` | 审批卡：同意 / 拒绝，恢复同一气泡 |
+| `external_tool_call` | 页面操作卡：工具名、参数、执行状态 |
+| `ui` | 自定义卡片：`kind=task_list` 任务列表；`kind=workflow_preview` 用 `AgentBpmnCard` 渲染 bpmn-js 缩略图；没有 `kind` 时退回「打开」按钮 |
+
+### 外部工具执行器
+
+`AgentAssistant.vue` 在模块加载时注册：
+
+| 工具 | 前端行为 |
+|---|---|
+| `workflow_create_draft` | 调 drafts 接口 → 跳设计器 `?draftId=` |
+| `workflow_get_canvas` | 从画布注册表读 XML + spec → 返回结果并带 `ui.kind=workflow_preview` |
+| `workflow_complete_task` | 调 `/api/workflow/tasks/{id}/complete`，广播 `workflow:changed` |
+| `workflow_rollback_task` | 调 `/api/workflow/tasks/{id}/rollback`，广播 `workflow:changed` |
+| `form_create_draft` | 编译字段 → 保存草稿 → 跳表单设计器 `?code=` |
+| `form_get_canvas` | 读表单设计器当前字段 → 返回字段清单 |
+
+执行结果通过 `/api/agent/external-calls/{callId}/result` 回传。**流进行中执行完的结果会先排队**，
+等本轮流结束再提交，避免和正在进行的 SSE 抢同一会话。
+
+### UI 卡片协议
+
+工具结果 JSON 里带：
+
+```json
+{
+  "ui": {
+    "kind": "task_list",
+    "title": "我的待办（2 条）",
+    "tasks": [{ "taskId": "...", "name": "...", "processName": "...", "businessKey": "..." }]
+  }
+}
+```
+
+或：
+
+```json
+{
+  "ui": {
+    "kind": "workflow_preview",
+    "title": "当前画布：请假审批",
+    "bpmnXml": "<bpmn:definitions .../>",
+    "route": "/workflow/designer"
+  }
+}
+```
+
+注意：
+
+- 卡片负载里的 `kind` 不能叫 `type`：SSE 帧本身有 `type` 字段，会覆盖事件类型
+- `ui` 由服务端单独推 `ui` 事件并写入历史块；外部工具结果里的 `ui` 会从模型上下文剔除
+- 任务卡片「办理」跳 `/workflow/todo?taskId=xxx`，待办页会直接打开办理抽屉
+
 ---
 
 ## 四、登录态与权限
@@ -316,7 +396,13 @@ Element Plus 2.9 里 `:value` 不生效，要用 `:model-value` + `@change`：
 |---|---|
 | `LoginView.vue` | 左右分栏；登录成功后读 `route.query.redirect` 回跳 |
 | `OAuthAuthorizeView.vue` | **独立全屏**，不在 `ConsoleLayout` 里；同意后 `window.location.href = redirectUrl` 跳出站点 |
-| `WorkflowView.vue` | 5 个 tab；bpmn-js 打包后 597 KB，已按路由懒加载 |
+| `WorkflowView.vue` | 5 个 tab；bpmn-js Modeler；`onMounted` 注册画布读取器给 AI；自动排版走 dagre |
+| `NodeConfigPanel.vue` | 画布 ⇄ 面板双向联动；连线条件支持「简单条件 / 表达式」两种模式 |
+| `FormDesignerView.vue` | form-create Designer；保存草稿/发布；`onMounted` 注册当前字段读取器给 AI |
+| `FormListView.vue` | 表单定义列表：详情预览、编辑、作废/恢复（只挡新绑定）、新增跳设计器 |
+| `MyTodoView.vue` | 待办/已办；读 `?taskId=` 自动打开办理抽屉；监听 `workflow:changed` 刷新 |
+| `WorkflowLabView.vue` | 一键初始化演练环境（测试账号、演示流程、节点配置） |
+| `AgentConfigView.vue` | 智能体配置：模型、提示词、页面多选、工具策略、技能绑定、测试连接 |
 | `OpenAppsView.vue` | 900px 抽屉 + 6 个 tab；授权树里 USER 类型接口在应用未开通授权码时置灰 |
 | `ApiCatalogView.vue` | 接口目录；启停用 `el-switch` 的 `:model-value` + `@change` |
 
@@ -328,8 +414,10 @@ Element Plus 2.9 里 `:value` 不生效，要用 `:model-value` + `@change`：
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
-| `index-*.js` | ~1.1 MB | Element Plus + Vue + 路由，gzip 后 ~378 KB |
-| `WorkflowView-*.js` | ~597 KB | bpmn-js，gzip 后 ~175 KB |
-| 其余页面 | 3–33 KB | 按路由懒加载 |
+| `index-*.js` | ~1.29 MB | Element Plus + Vue + 路由，gzip 后 ~428 KB |
+| `FormDesignerView-*.js` | ~1.19 MB | form-create Designer，gzip 后 ~376 KB |
+| `WorkflowView-*.js` | ~491 KB | bpmn-js Modeler，gzip 后 ~149 KB |
+| `Viewer-*.js` | ~204 KB | bpmn-js Viewer（实例详情 / AI 卡片共用），按需懒加载 |
+| 其余页面 | 3–40 KB | 按路由懒加载 |
 
 如果后续要优化首屏，优先做 Element Plus 按需引入（现在全量引入）。

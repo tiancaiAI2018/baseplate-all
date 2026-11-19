@@ -272,7 +272,38 @@ chain.doFilter(...);
 
 ---
 
-## 六、红线清单
+## 六、智能体（AI）安全
+
+### 6.1 工具不是新的权限通道
+
+| 工具类型 | 安全边界 |
+|---|---|
+| 内部工具 | 服务端执行，`requirePermission` 按当前用户权限点校验；只做只读查询 |
+| 外部工具 | 只下发 schema 与参数；前端带用户令牌调现有 REST，`@RequiresPermission`、`@AuditLog`、`requireOwnedTask` 全部照常生效 |
+
+工具在**进入模型之前**就已经过滤：`selectTools` 依次检查页面匹配、用户权限点、Agent 绑定与审批策略。
+模型看不到一个它调不动的工具。
+
+### 6.2 页面作用域
+
+Agent、工具、会话三者都带 `pageKey`。换页继续旧会话时同步 `agent_session.page_key`，
+否则恢复流会用旧页面重建 Agent，出现「工具调用成功、恢复时找不到」。
+
+### 6.3 HITL 与外部调用
+
+- 审批策略为 `ASK` 的工具先落 `agent_hitl_request`，用户同意后带 `ConfirmResult` 恢复同一会话
+- 外部调用落 `agent_external_call`，结果只能由**发起人本人**回传（`findPending(tenant, userId, callId)`）
+- 多个调用按 `replyId` 收齐后才恢复模型；过期时间与 HITL 一致
+
+### 6.4 密钥与上下文
+
+- 模型 API Key 只存库/环境变量，`/api/agent/definitions` 不回显
+- 外部工具结果里的 `ui`（可能含整段 BPMN XML）不进模型上下文，只走 `ui` 事件
+- 前端 markdown 渲染统一过 DOMPurify；工具参数展示做长度截断
+
+---
+
+## 七、红线清单
 
 改安全相关代码前逐条对照：
 
@@ -286,10 +317,12 @@ chain.doFilter(...);
 8. [ ] refresh token 仍是哈希存储 + 轮换
 9. [ ] 新增的 `/api` 控制器没有漏 `@RequiresPermission`（`SUPER_ADMIN` 会短路，测试时用普通账号验证）
 10. [ ] 租户 id 从 `CurrentUser` 取，不从请求参数取
+11. [ ] 智能体有副作用的工具做成了外部工具，没有在内部工具里直接改业务数据
+12. [ ] 新工具声明了正确的 `pages` 和 `permissionCode`，并确认普通账号在目标页面能看到
 
 ---
 
-## 七、已知未做
+## 八、已知未做
 
 诚实列出来，别当成已有能力：
 

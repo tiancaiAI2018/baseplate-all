@@ -276,3 +276,7 @@ permissions:
 13. [ ] 前端页面里 `import axios` 绕过 `api/client.ts`
 14. [ ] 前端手改了 `baseplate-bootstrap/src/main/resources/static/`
 15. [ ] 新增 `@RequiresPermission` 但权限点没进模块清单（运行期永远 403）
+16. [ ] 在内部工具里直接改业务数据（应声明为外部工具，由前端走 REST）
+17. [ ] 在 system prompt 里拼「可用工具」列表（破坏前缀缓存）
+18. [ ] 工具没有声明 `pages` / `permissionCode`，或工具编码与已有工具重复
+19. [ ] `ui` 卡片用 `type` 表示子类型（会覆盖 SSE 事件名，必须用 `kind`）

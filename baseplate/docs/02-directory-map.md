@@ -45,7 +45,7 @@ PostgreSQL
 
 ## 二、后端逐模块
 
-### `baseplate-api`（内核契约，47 个类）
+### `baseplate-api`（内核契约，59 个类）
 
 ```
 annotation/
@@ -165,12 +165,14 @@ config/PlatformProperties      token-secret / secret-key / ttl / 窗口 / 沙盒
 
 | 模块 | 关键类 | 说明 |
 |---|---|---|
-| `workflow` | `FlowableProcessEngineAdapter`、`BpmnXmlValidator`、`WorkflowController` | BPMN 部署用 `disableSchemaValidation()`（fat jar 下 XSD 解析失败）；XML 走白名单校验 |
+| `workflow` | `FlowableProcessEngineAdapter`、`BpmnXmlValidator`、`NodeConfigCompiler`、`BpmnDraftComposer`、`WorkflowController`、`WorkflowDraftController` | BPMN 部署用 `disableSchemaValidation()`（fat jar 下 XSD 解析失败）；XML 走白名单校验；节点配置与草稿由服务端编译 |
 | `rule` | `StructuredRuleInterpreter`、`RuleFieldRegistry`、`RuleController` | 只有「字段 + 运算符 + 值」，不接受表达式文本 |
-| `metadata` | `MetadataService`、`MetadataController` | FORM/LIST/FLOW 三类，字段白名单，禁 `script` / `expression` |
+| `metadata` | `MetadataService`、`MetadataController` | FORM/LIST/FLOW 三类，字段白名单，禁 `script` / `expression`；`suspend/activate` 只挡新绑定 |
 | `registry` | `ModuleDescriptorLoader`、`ModuleDescriptorValidator`、`MigrationPlanWriter` | 清单加载与校验 |
 | `runtime` | `PortRegistry`、`EncryptedPropertyEnvironmentPostProcessor`、`TenantContext` | 端口唯一性、配置解密 |
 | `adapters` | `redis/*`、`memory/*` | 每个端口两套实现 |
+| `agent` | `AgentChatService`、`AgentConfigService`、`AgentRuntimeFactory`、`ToolRegistry`、`SkillIndexService` | 智能体定义/会话/工具/技能/HITL/外部调用；只认工具接口，不认识具体业务 |
+| `agent-workflow` | `WorkflowAgentTools`、`WorkflowAgentToolProvider`、`FormAgentTools`、`FormAgentToolProvider` | 业务工具声明；内部只读，写操作声明为外部工具交给前端执行 |
 
 ### `baseplate-bootstrap`（唯一可执行制品）
 
@@ -192,10 +194,19 @@ baseplate-console/src/
   App.vue                 根组件
   style.css               ★ 全局设计系统：CSS 变量 + .page/.card/.toolbar/.perm-group/.kv/.json 等通用类
   api/client.ts           ★ 唯一的 axios 实例。令牌注入、401 跳登录、403 PASSWORD_CHANGE_REQUIRED 跳改密
+  api/agentStream.ts      对话 / HITL / 外部工具回传的 SSE 解析（POST + fetch，不用 EventSource）
+  api/agentExternal.ts    外部工具前端执行器注册表（toolCode → handler）
+  api/agentCanvas.ts      页面画布读取器注册表（设计器挂载时注册，卸载时注销）
   stores/auth.ts          ★ 登录态、has(permission)、isSuperAdmin、loadMe
+  stores/agent.ts         ★ 会话、消息块、外部工具结果排队、HITL 决策、流式状态
+  stores/workflow.ts      待办角标
   router/index.ts         ★ 路由表 + 守卫（未登录带 redirect 跳登录；首登未改密强制去改密页）
-  layout/ConsoleLayout.vue  侧边栏（按 auth.has 控制菜单可见）+ 顶栏面包屑 + 用户菜单
-  views/                  15 个页面，一页一个 .vue
+  layout/ConsoleLayout.vue  侧边栏（按 auth.has 控制菜单可见）+ 顶栏面包屑 + 悬浮助手
+  components/agent/       AgentAssistant（气泡/面板）、AgentMarkdown、AgentBpmnCard
+                          formRuleBuilder（AI 字段 → form-create）、SchemaFieldEditor
+  utils/bpmnLayout.ts     dagre 自动排版
+  utils/bpmnSpec.ts       画布 → 节点/连线 spec（供 AI 读取当前画布）
+  views/                  22 个页面，一页一个 .vue
 ```
 
 ### 页面清单
@@ -214,7 +225,16 @@ baseplate-console/src/
 | `AuditView.vue` | `/audit/logs` | 三类 tab + 详情抽屉 |
 | `RulesView.vue` | `/rule/config` | 规则集配置与试算 |
 | `MetadataView.vue` | `/metadata/forms` | 低代码 Schema 编辑 |
-| `WorkflowView.vue` | `/workflow/designer` | 5 个 tab：设计器 / 定义 / 发起 / 实例 / 待办 |
+| `WorkflowView.vue` | `/workflow/designer` | 5 个 tab：设计器 / 定义 / 发起 / 实例 / 待办；画布向 AI 注册读取器 |
+| `NodeConfigPanel.vue` | — | 设计器右侧属性面板（找人/签署/表单/条件/按钮） |
+| `WorkflowLabView.vue` | `/workflow/lab` | 演练环境：初始化、账号、演示流程 |
+| `ProcessStartView.vue` | `/workflow/start` | 发起流程：选定义、填表单、提交 |
+| `MyTodoView.vue` | `/workflow/todo` | 待办/已办；支持 AI 卡片深链 `?taskId=` 直接打开办理抽屉 |
+| `MyInstancesView.vue` | `/workflow/mine` | 我发起的实例与进度 |
+| `FormListView.vue` | `/workflow/forms` | 流程表单列表：详情、编辑、作废/恢复、新增 |
+| `FormDesignerView.vue` | `/workflow/forms/design` | 表单设计器；向 AI 注册当前字段读取器 |
+| `FormRenderer.vue` | — | form-create 渲染/预览 |
+| `AgentConfigView.vue` | `/agent/config` | 智能体配置：模型、提示词、页面、工具、技能、测试连接 |
 
 ---
 
@@ -232,7 +252,13 @@ baseplate-console/src/
 | 哪些接口能暴露到开放平台 | 业务方法上的 `@OpenApi`；能不能勾选还看 `open_app.grant_types` |
 | 令牌有效期 | `baseplate.platform.token-ttl`（开放）、`baseplate.identity.token-ttl`（内部） |
 | 流程能部署什么 BPMN | `BpmnXmlValidator` 的白名单 |
+| 流程节点的条件/按钮怎么编译 | `NodeConfigCompiler`；AI 草稿由 `BpmnDraftComposer` |
 | 规则能用哪些字段 | 各模块清单的 `rule-fields`，汇总在 `RuleFieldRegistry` |
+| 智能体怎么按页面选工具 | `AgentChatService.selectTools` + `ToolDescriptor.pages` |
+| 外部工具怎么执行 | `baseplate-console/src/api/agentExternal.ts` 注册 handler；服务端只发 schema |
+| AI 怎么读当前画布 | 设计器页 `registerAgentCanvas` + `utils/bpmnSpec.ts` |
+| AI 消息卡片怎么渲染 | `AgentAssistant.vue` 的 `ui` 分支 + `AgentBpmnCard.vue` |
+| 智能体系统提示词 | `AgentRuntimeFactory.systemPrompt`（不再拼工具列表） |
 | 前端主题色/圆角 | `baseplate-console/src/style.css` 顶部的 `:root` 变量 |
 | 侧边栏菜单分组 | `baseplate-console/src/layout/ConsoleLayout.vue` 的 `el-menu-item-group` |
 
@@ -246,4 +272,6 @@ baseplate-console/src/
 | `baseplate-api/` 里加 Spring 依赖 | 触发 `PomBoundaryTest` 失败，且内核不可移植 |
 | `baseplate-bootstrap/` 里写业务逻辑 | 它只负责装配与启动 |
 | `baseplate-console/src/views/` 里直接写 `axios` | 必须走 `api/client.ts`，否则令牌注入与 401 处理失效 |
+| 内部工具里直接改业务数据 | 权限、审计、数据归属会被模型绕过；写操作必须声明为外部工具走 REST |
+| `AgentRuntimeFactory` 里拼「可用工具」列表 | 工具集变化会让 prompt 前缀失效，破坏厂商侧缓存；schema 已经暴露给模型 |
 | `baseplate-bootstrap/src/main/resources/static/` 手改 | 这是前端构建产物的同步目标，改了下次 `npm run build` 就丢 |

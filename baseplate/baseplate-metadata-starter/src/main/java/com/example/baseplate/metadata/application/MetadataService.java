@@ -32,16 +32,26 @@ public final class MetadataService {
     }
 
     public record SchemaView(long id, String kind, String code, String name, int version,
-                             String status, String schemaJson, String uiSchemaJson) {
+                             String status, boolean suspended,
+                             String schemaJson, String uiSchemaJson) {
     }
 
     private static final RowMapper<SchemaView> MAPPER = (rs, i) -> new SchemaView(
             rs.getLong("id"), rs.getString("kind"), rs.getString("code"), rs.getString("name"),
-            rs.getInt("version"), rs.getString("status"),
+            rs.getInt("version"), rs.getString("status"), rs.getBoolean("suspended"),
             rs.getString("schema_json"), rs.getString("ui_schema_json"));
 
     public List<SchemaView> list(String kind) {
-        String tenant = currentUser.current().tenantId();
+        return list(currentUser.current().tenantId(), kind);
+    }
+
+    /**
+     * 显式传租户的查询入口。
+     *
+     * <p>Agent 工具、定时任务等运行在异步线程，没有 SecurityContext，
+     * 走 {@link CurrentUserProvider} 会直接抛「未认证」。调用方已有租户上下文时用这个重载。</p>
+     */
+    public List<SchemaView> list(String tenant, String kind) {
         if (kind != null && !kind.isBlank()) {
             return jdbc.query("SELECT DISTINCT ON (code) * FROM meta_schema"
                             + " WHERE tenant_id = ? AND kind = ? ORDER BY code, version DESC",
@@ -52,7 +62,11 @@ public final class MetadataService {
     }
 
     public SchemaView latest(String kind, String code) {
-        String tenant = currentUser.current().tenantId();
+        return latest(currentUser.current().tenantId(), kind, code);
+    }
+
+    /** 显式传租户的读取入口，理由同 {@link #list(String, String)}。 */
+    public SchemaView latest(String tenant, String kind, String code) {
         List<SchemaView> rows = jdbc.query("SELECT * FROM meta_schema WHERE tenant_id = ?"
                         + " AND kind = ? AND code = ? ORDER BY version DESC LIMIT 1",
                 MAPPER, tenant, normalizeKind(kind), code);
@@ -91,6 +105,22 @@ public final class MetadataService {
         return latest(normalizedKind, code);
     }
 
+    /**
+     * 作废/恢复整个定义（按 code 全版本置标记）。
+     * 与工作流定义一致：只挡新绑定，已经绑定该表单的节点仍能按原样渲染。
+     */
+    public SchemaView suspend(String kind, String code, boolean suspended) {
+        String tenant = currentUser.current().tenantId();
+        String normalizedKind = normalizeKind(kind);
+        int updated = jdbc.update("UPDATE meta_schema SET suspended = ?"
+                        + " WHERE tenant_id = ? AND kind = ? AND code = ?",
+                suspended, tenant, normalizedKind, code);
+        if (updated == 0) {
+            throw new IllegalArgumentException("元数据不存在：" + kind + "/" + code);
+        }
+        return latest(normalizedKind, code);
+    }
+
     @SuppressWarnings("unchecked")
     public void validateSchema(String schemaJson) {
         Map<String, Object> schema;
@@ -116,9 +146,11 @@ public final class MetadataService {
                 throw new IllegalArgumentException("字段 " + name + " 的 type 不在白名单内：" + type);
             }
             String normalized = String.valueOf(name).toLowerCase();
-            for (String forbidden : FORBIDDEN) {
-                if (normalized.contains(forbidden)) {
-                    throw new IllegalArgumentException("字段名不允许包含 " + forbidden);
+            // 按分隔符拆词后再比对保留词：description 是正常字段名，
+            // 用 contains 会把 de-script-ion 误判成危险命名，直接把合法表单拒掉。
+            for (String token : normalized.split("[^a-z0-9]+")) {
+                if (FORBIDDEN.contains(token)) {
+                    throw new IllegalArgumentException("字段名不允许包含保留词：" + token);
                 }
             }
         }

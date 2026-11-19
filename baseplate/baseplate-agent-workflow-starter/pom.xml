@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.example.baseplate</groupId>
+    <artifactId>baseplate-parent</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>baseplate-agent-workflow-starter</artifactId>
+  <name>baseplate-agent-workflow-starter</name>
+
+  <!--
+    独立模块的意义：workflow 不依赖 agent，agent 也不依赖 workflow。
+    这里只做「把工作流能力包装成 Agent 工具」的粘合层，任一模块都能单独使用。
+  -->
+  <dependencies>
+    <dependency>
+      <groupId>com.example.baseplate</groupId>
+      <artifactId>baseplate-agent-starter</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>com.example.baseplate</groupId>
+      <artifactId>baseplate-workflow-starter</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <!-- 表单定义（meta_schema）由元数据模块提供，表单工具只读复用它 -->
+    <dependency>
+      <groupId>com.example.baseplate</groupId>
+      <artifactId>baseplate-metadata-starter</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-autoconfigure</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+  </dependencies>
+</project>

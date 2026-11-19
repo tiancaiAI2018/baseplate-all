@@ -136,8 +136,10 @@ public final class WorkflowConfigRepository {
     }
 
     public List<Map<String, Object>> forms(String tenant) {
+        // 作废的表单不再出现在新绑定下拉里；已绑定的节点仍通过 formSchema 按原版本渲染
         return jdbc.queryForList("SELECT DISTINCT ON (code) code, name, version FROM meta_schema"
                 + " WHERE tenant_id = ? AND kind = 'FORM' AND status = 'PUBLISHED'"
+                + " AND suspended = FALSE"
                 + " ORDER BY code, version DESC", tenant);
     }
 

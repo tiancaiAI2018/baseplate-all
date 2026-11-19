@@ -10,7 +10,7 @@ for arg in "$@"; do
   if [ "$arg" = "--migrate" ]; then
     MIGRATE_ARGS=(
       "--spring.flyway.enabled=true"
-      "--spring.flyway.locations=classpath:db/migration/baseplate,classpath:db/migration/identity,classpath:db/migration/audit,classpath:db/migration/platform,classpath:db/migration/metadata,classpath:db/migration/rule,classpath:db/migration/workflow"
+      "--spring.flyway.locations=classpath:db/migration/baseplate,classpath:db/migration/identity,classpath:db/migration/audit,classpath:db/migration/platform,classpath:db/migration/metadata,classpath:db/migration/rule,classpath:db/migration/workflow,classpath:db/migration/agent"
     )
   else
     APP_ARGS+=("$arg")

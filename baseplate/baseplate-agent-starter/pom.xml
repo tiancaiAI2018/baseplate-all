@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.example.baseplate</groupId>
+    <artifactId>baseplate-parent</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>baseplate-agent-starter</artifactId>
+  <name>baseplate-agent-starter</name>
+
+  <properties>
+    <!-- 与村通后端保持同一基线，避免两套 Agent 行为不一致 -->
+    <agentscope.version>2.0.4</agentscope.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.example.baseplate</groupId>
+      <artifactId>baseplate-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.example.baseplate</groupId>
+      <artifactId>baseplate-runtime</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>com.example.baseplate</groupId>
+      <artifactId>baseplate-security-starter</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+
+    <!-- Agent 运行时：core 负责 ReAct 循环、事件流、工具与权限；模型按厂商拆成扩展 -->
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-core</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+    <!-- OpenAI 兼容端点：MiniMax、DeepSeek、Moonshot、vLLM 都走这一条 -->
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-extensions-model-openai</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+    <!-- 协议不兼容的厂商用各自原生扩展；新增厂商只需在 ModelProviderFactory 加分支 -->
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-extensions-model-dashscope</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-extensions-model-anthropic</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-extensions-model-gemini</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-extensions-model-ollama</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+    <!-- 会话上下文持久化到 PostgreSQL；表结构与 Flyway 迁移一致 -->
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-extensions-postgresql</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
+  </dependencies>
+</project>

@@ -1,0 +1,27 @@
+id: agent
+display-name: 智能体
+version: 1.0.0
+requires: "baseplate-api >=1.0.0,<2.0.0"
+root-package: com.example.baseplate.agent
+enabled-by-default: true
+
+permissions:
+  - { code: "agent:chat", label: 使用智能助手, type: BUTTON }
+  - { code: "agent:config:view", label: 查看智能体配置, type: MENU }
+  - { code: "agent:config:edit", label: 编辑智能体配置, type: BUTTON }
+  - { code: "agent:session:view", label: 查看会话记录, type: BUTTON }
+  - { code: "agent:session:view:all", label: 查看全部会话记录, type: BUTTON }
+  - { code: "agent:metrics:view", label: 查看智能体观测, type: BUTTON }
+
+menus:
+  - { path: /agent/config, label: 智能体配置, permission: "agent:config:view", icon: MagicStick }
+
+config-keys:
+  - baseplate.agent.default-model
+  - baseplate.agent.default-base-url
+  - baseplate.agent.max-iters
+  - baseplate.agent.stream-timeout-seconds
+  - baseplate.agent.skill-dir
+
+flyway-locations:
+  - classpath:db/migration/agent

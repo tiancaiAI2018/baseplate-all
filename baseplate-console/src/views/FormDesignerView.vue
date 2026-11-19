@@ -2,12 +2,13 @@
   <div class="page">
     <div class="page-head">
       <div>
-        <h2 class="page-title">流程表单设计</h2>
+        <h2 class="page-title">表单设计</h2>
         <p class="page-desc">
           拖拽生成表单，保存为可复用组件素材；表单发布后可以被任意流程节点绑定，也能在别的页面单独渲染。
         </p>
       </div>
       <div class="page-actions">
+        <el-button :icon="Back" @click="backToList">返回列表</el-button>
         <el-button @click="preview">预览</el-button>
         <el-button @click="saveDraft">保存草稿</el-button>
         <el-button type="primary" @click="publish">保存并发布</el-button>
@@ -73,22 +74,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Back } from '@element-plus/icons-vue'
 import FcDesigner from '@form-create/designer'
 import '@form-create/designer/src/style/index.css'
 import http, { errorText } from '../api/client'
+import { registerAgentCanvas } from '../api/agentCanvas'
 import FormRenderer from './FormRenderer.vue'
 
+const route = useRoute()
+const router = useRouter()
 const designerRef = ref<any>(null)
 const forms = ref<any[]>([])
 const widgets = ref<any[]>([])
 const currentCode = ref('')
-const code = ref('leave_form')
-const name = ref('请假申请单')
+const code = ref('')
+const name = ref('')
 const actions = ref<any[]>([])
 const previewOpen = ref(false)
 const previewRule = ref<any[]>([])
+let disposeCanvasProvider: (() => void) | null = null
 
 const TYPE_MAP: Record<string, string> = {
   input: 'STRING', textarea: 'TEXT', inputNumber: 'NUMBER', slider: 'NUMBER',
@@ -133,6 +140,7 @@ async function loadWidgets() {
 
 async function loadForm(selected: string) {
   if (!selected) return
+  currentCode.value = selected
   try {
     const { data } = await http.get(`/api/metadata/FORM/${selected}`)
     code.value = data.code
@@ -214,8 +222,56 @@ function viewWidget(widget: any) {
   previewOpen.value = true
 }
 
+/** AI 保存草稿后会带 code 跳到本页；已经在本页时靠 v 时间戳触发重新载入。 */
+async function loadFromRoute() {
+  const next = String(route.query.code || '')
+  if (!next) {
+    resetNewForm()
+    return
+  }
+  currentCode.value = next
+  await loadForm(next)
+}
+
+/** 新增模式：清空编码、名称和画布，避免把上一个表单的内容带进来。 */
+function resetNewForm() {
+  code.value = ''
+  name.value = ''
+  currentCode.value = ''
+  actions.value = []
+  designerRef.value?.setRule?.([])
+}
+
+function backToList() {
+  router.push('/workflow/forms')
+}
+
 onMounted(async () => {
+  // AI 助手读取的是设计器当前内容（含未保存修改），不是已保存版本
+  disposeCanvasProvider = registerAgentCanvas('workflow/forms/design', () => ({
+    available: true,
+    data: {
+      code: code.value,
+      name: name.value,
+      fields: fields.value.map((item: any) => ({
+        field: item.field,
+        title: item.title || item.field,
+        type: item.type,
+        options: Array.isArray(item.options) ? item.options : undefined
+      }))
+    }
+  }))
   await Promise.allSettled([loadForms(), loadWidgets()])
+  await loadFromRoute()
+})
+
+onBeforeUnmount(() => {
+  disposeCanvasProvider?.()
+  disposeCanvasProvider = null
+})
+
+watch(() => [route.query.code, route.query.v], () => {
+  loadFromRoute()
 })
 </script>
 

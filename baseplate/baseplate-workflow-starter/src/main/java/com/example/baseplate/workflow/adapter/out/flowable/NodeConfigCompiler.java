@@ -137,6 +137,13 @@ public final class NodeConfigCompiler {
 
     private void applyCondition(Document doc, Element flow, WorkflowNodeConfig config) {
         Map<String, Object> condition = config.conditionConfig();
+        // 自由表达式优先：面板切到「表达式」模式时只填 expression，
+        // 支持 && || 和括号，由 Flowable 的表达式引擎求值
+        Object rawExpression = condition.get("expression");
+        if (rawExpression != null && !String.valueOf(rawExpression).isBlank()) {
+            applyExpression(doc, flow, config, String.valueOf(rawExpression).trim());
+            return;
+        }
         String field = String.valueOf(condition.getOrDefault("field", ""));
         String operator = String.valueOf(condition.getOrDefault("operator", ""));
         String valueType = String.valueOf(condition.getOrDefault("valueType", "STRING"));
@@ -158,11 +165,27 @@ public final class NodeConfigCompiler {
             }
             literal = "'" + text + "'";
         }
+        writeCondition(doc, flow, "${" + field + " " + operator + " " + literal + "}");
+    }
+
+    /** 表达式条件：只做包装与长度校验，语法交给流程引擎。 */
+    private void applyExpression(Document doc, Element flow, WorkflowNodeConfig config, String raw) {
+        String expression = raw.startsWith("${") ? raw : "${" + raw + "}";
+        if (!expression.endsWith("}")) {
+            throw new IllegalArgumentException("连线 " + config.nodeId() + " 的条件缺少右花括号");
+        }
+        if (expression.length() > 1000) {
+            throw new IllegalArgumentException("连线 " + config.nodeId() + " 的条件过长（最多 1000 字符）");
+        }
+        writeCondition(doc, flow, expression);
+    }
+
+    private void writeCondition(Document doc, Element flow, String expression) {
         removeChildren(flow, "conditionExpression");
-        Element expression = doc.createElementNS(BPMN_NS, "bpmn:conditionExpression");
-        expression.setAttributeNS(XSI_NS, "xsi:type", "bpmn:tFormalExpression");
-        expression.setTextContent("${" + field + " " + operator + " " + literal + "}");
-        flow.appendChild(expression);
+        Element element = doc.createElementNS(BPMN_NS, "bpmn:conditionExpression");
+        element.setAttributeNS(XSI_NS, "xsi:type", "bpmn:tFormalExpression");
+        element.setTextContent(expression);
+        flow.appendChild(element);
     }
 
     private static Element findById(Element process, String id) {

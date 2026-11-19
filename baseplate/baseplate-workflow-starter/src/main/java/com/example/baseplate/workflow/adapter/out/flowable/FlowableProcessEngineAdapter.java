@@ -417,13 +417,15 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
                     definition.getVersion(), merged));
         }
         String reason = text(variables.get("reason") != null ? variables.get("reason") : variables.get("comment"));
+        boolean rejected = "REJECT".equals(resolved);
         if (definition != null && configRepository != null) {
             var config = configRepository.nodeConfig(tenant, definition.getKey(),
                     definition.getVersion(), task.getTaskDefinitionKey());
             if (config.isPresent()) {
                 validateDecision(config.get(), resolved, reason);
                 Object formData = variables.get("formData");
-                if (config.get().formCode() != null && !config.get().formCode().isBlank()
+                // 驳回不保存审批表单：表单数据属于通过后的业务结果，驳回意见已记在操作日志
+                if (!rejected && config.get().formCode() != null && !config.get().formCode().isBlank()
                         && formData instanceof Map<?, ?>) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> values = (Map<String, Object>) formData;
@@ -432,9 +434,48 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
                 }
             }
         }
+        if (rejected) {
+            // 驳回必须真正退回：之前只把 decision 塞进变量，没有分支消费它，
+            // 任务会沿默认出线继续走到结束，表现就是「点了驳回却审批通过」。
+            reject(task, resolved, reason);
+            return;
+        }
         engine.getTaskService().complete(taskId, variables);
         record(resolved, task.getProcessInstanceId(), task.getProcessDefinitionId(), taskId,
                 task.getTaskDefinitionKey(), resolved, reason, null);
+    }
+
+    /** 驳回：退回到上一个已完成的用户任务；没有可退节点时结束实例。 */
+    private void reject(Task task, String decision, String reason) {
+        String target = previousUserTaskKey(task);
+        if (target == null) {
+            engine.getRuntimeService().deleteProcessInstance(task.getProcessInstanceId(),
+                    "驳回：" + (reason == null ? "" : reason));
+            record("REJECT", task.getProcessInstanceId(), task.getProcessDefinitionId(),
+                    task.getId(), task.getTaskDefinitionKey(), decision, reason, null);
+            return;
+        }
+        engine.getRuntimeService().createChangeActivityStateBuilder()
+                .processInstanceId(task.getProcessInstanceId())
+                .moveActivityIdTo(task.getTaskDefinitionKey(), target)
+                .changeState();
+        // 动作记为 ROLLBACK，轨迹页据此展示「打回」并统计次数
+        record("ROLLBACK", task.getProcessInstanceId(), task.getProcessDefinitionId(),
+                task.getId(), task.getTaskDefinitionKey(), decision, reason, target);
+    }
+
+    /** 上一个已完成的用户任务；会签场景要排除当前节点自己的历史实例。 */
+    private String previousUserTaskKey(Task task) {
+        List<HistoricTaskInstance> finished = engine.getHistoryService()
+                .createHistoricTaskInstanceQuery()
+                .processInstanceId(task.getProcessInstanceId())
+                .finished()
+                .orderByHistoricTaskInstanceEndTime().desc()
+                .listPage(0, 20);
+        return finished.stream()
+                .map(HistoricTaskInstance::getTaskDefinitionKey)
+                .filter(key -> key != null && !key.equals(task.getTaskDefinitionKey()))
+                .findFirst().orElse(null);
     }
 
     @Override

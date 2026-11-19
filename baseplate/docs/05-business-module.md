@@ -564,7 +564,21 @@ public class OpenCustomerController { ... }
 
 ---
 
-## 十一、检查清单
+## 十一、Step 10（可选）：暴露给智能体
+
+如果希望 AI 助手能查询/操作这个模块，按工具类型分开做：
+
+| 类型 | 放哪 | 约束 |
+|---|---|---|
+| 内部工具（只读） | 新建 `XxxTools`（`@Tool` 方法）+ `XxxToolProvider`（`AgentToolSpec`） | 代码里 `requirePermission`；只查不改 |
+| 外部工具（有副作用） | 只在 `XxxToolProvider` 声明 schema，`handler = null` | 前端在 `api/agentExternal.ts` 注册执行器，带用户令牌调本模块 REST |
+
+工具声明必须写清 `pages`（哪些页面可用）和 `permissionCode`。前端若还要展示卡片，
+约定 `ui: { kind: "...", ... }`，`kind` 不要叫 `type`。
+
+---
+
+## 十二、检查清单
 
 提交前逐条确认：
 
@@ -580,10 +594,11 @@ public class OpenCustomerController { ... }
 - [ ] 模块加进了父 `pom.xml` 与 `baseplate-bootstrap/pom.xml`
 - [ ] 启动后 `权限目录已同步` 的模块数增加了
 - [ ] 用非 `SUPER_ADMIN` 账号验证过 403 是否如期
+- [ ] 若加了智能体工具：内部工具只读、外部工具走 REST，`pages`/`permissionCode` 正确
 
 ---
 
-## 十二、常见错误
+## 十三、常见错误
 
 | 现象 | 原因 | 修法 |
 |---|---|---|

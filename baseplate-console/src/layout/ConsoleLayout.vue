@@ -22,7 +22,9 @@
               <el-icon><Bell /></el-icon>
               <template #title>
                 我的待办
-                <el-badge v-if="workflow.todoCount" :value="workflow.todoCount" :max="99" class="menu-badge" />
+                <span v-if="workflow.todoCount" class="menu-count">
+                  {{ workflow.todoCount > 99 ? '99+' : workflow.todoCount }}
+                </span>
               </template>
             </el-menu-item>
             <el-menu-item index="/workflow/mine">
@@ -67,6 +69,9 @@
             <el-menu-item v-if="auth.has('wf:lab') || auth.isSuperAdmin" index="/workflow/lab">
               <el-icon><SetUp /></el-icon><template #title>流程演练</template>
             </el-menu-item>
+            <el-menu-item v-if="auth.has('agent:config:view') || auth.isSuperAdmin" index="/agent/config">
+              <el-icon><MagicStick /></el-icon><template #title>智能体配置</template>
+            </el-menu-item>
           </el-menu-item-group>
         </el-menu>
       </div>
@@ -110,6 +115,8 @@
         <router-view />
       </el-main>
     </el-container>
+    <!-- 全局悬浮 AI 助手：页面作用域由当前路由决定 -->
+    <AgentAssistant />
   </el-container>
 </template>
 
@@ -119,10 +126,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Odometer, User, Key, OfficeBuilding, Connection, Document,
-  SetUp, Grid, Share, Fold, Expand, ArrowDown, Files, Promotion, Bell, Tickets
+  SetUp, Grid, Share, Fold, Expand, ArrowDown, Files, Promotion, Bell, Tickets, MagicStick
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { useWorkflowStore } from '../stores/workflow'
+import AgentAssistant from '../components/agent/AgentAssistant.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -152,6 +160,24 @@ async function onCommand(command: string) {
 </script>
 
 <style scoped>
-.menu-badge { margin-left: 8px; vertical-align: 1px; }
-.menu-badge :deep(.el-badge__content) { border: none; background: #D97B3F; }
+/* 用绝对定位的计数徽标，避免 el-badge 在菜单标题里被右侧边界裁掉 */
+.menu-count {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #D97B3F;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  box-sizing: border-box;
+}
+:deep(.el-menu-item) {
+  position: relative;
+}
 </style>

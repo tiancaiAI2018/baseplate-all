@@ -134,14 +134,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Promotion, Refresh, Search } from '@element-plus/icons-vue'
 import http, { errorText } from '../api/client'
 import { useWorkflowStore } from '../stores/workflow'
 import TaskHandleDrawer from '../components/TaskHandleDrawer.vue'
 
+const route = useRoute()
 const router = useRouter()
 const workflow = useWorkflowStore()
 
@@ -232,7 +233,31 @@ async function onHandled() {
   await Promise.allSettled([load(), workflow.refreshTodo()])
 }
 
-onMounted(() => { load(); loadCatalog() })
+/** AI 任务卡片点「办理」会带 taskId 跳过来，直接打开办理抽屉。 */
+function openFromQuery() {
+  const taskId = String(route.query.taskId || '').trim()
+  if (!taskId) return
+  doneInfo.value = null
+  activeTaskId.value = taskId
+  handleOpen.value = true
+}
+
+/** AI 在对话里办理/打回后广播 workflow:changed，列表立即刷新。 */
+function onWorkflowChanged() {
+  load()
+  workflow.refreshTodo()
+}
+
+onMounted(() => {
+  load()
+  loadCatalog()
+  openFromQuery()
+  window.addEventListener('workflow:changed', onWorkflowChanged)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('workflow:changed', onWorkflowChanged)
+})
 </script>
 
 <style scoped>

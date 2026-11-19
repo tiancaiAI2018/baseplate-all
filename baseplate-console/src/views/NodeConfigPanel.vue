@@ -77,8 +77,12 @@
         </template>
 
         <template v-if="config.nodeType === 'sequenceFlow'">
-          <div class="sub-title">出线条件（结构化，不写表达式）</div>
-          <div class="button-row">
+          <div class="sub-title">出线条件</div>
+          <el-radio-group v-model="conditionMode" size="small" style="margin-bottom: 6px">
+            <el-radio-button value="STRUCTURED">简单条件</el-radio-button>
+            <el-radio-button value="EXPRESSION">表达式</el-radio-button>
+          </el-radio-group>
+          <div v-if="conditionMode === 'STRUCTURED'" class="button-row">
             <el-input v-model="condition.field" placeholder="字段" style="width: 92px" />
             <el-select v-model="condition.operator" style="width: 78px">
               <el-option v-for="op in options.operators || []" :key="op" :label="op" :value="op" />
@@ -88,6 +92,11 @@
               <el-option v-for="t in options.fieldTypes || []" :key="t" :label="t" :value="t" />
             </el-select>
           </div>
+          <template v-else>
+            <el-input v-model="conditionExpression" type="textarea" :rows="3"
+                      placeholder="${amount >= 5000 && (dept == 'SALES' || urgent == true)}" />
+            <span class="hint">支持 &amp;&amp; || ! 和括号；字符串用单引号，数字不加引号</span>
+          </template>
         </template>
       </el-form>
     </div>
@@ -106,6 +115,8 @@ const config = ref<any>(null)
 const buttons = ref<any[]>([])
 const trigger = ref('')
 const condition = reactive<any>({ field: '', operator: '>', value: '', valueType: 'NUMBER' })
+const conditionMode = ref<'STRUCTURED' | 'EXPRESSION'>('STRUCTURED')
+const conditionExpression = ref('')
 const store = new Map<string, any>()
 
 function typeLabel(type: string) {
@@ -215,6 +226,9 @@ function select(node: any) {
   buttons.value = Array.isArray(item.decisionConfig?.buttons)
     ? item.decisionConfig.buttons.map((b: any) => ({ ...b })) : []
   trigger.value = item.triggerConfig?.onEnter || ''
+  // 自由表达式优先回填：组合条件无法拆成单个字段，必须原样保留
+  conditionExpression.value = item.conditionConfig?.expression || ''
+  conditionMode.value = conditionExpression.value ? 'EXPRESSION' : 'STRUCTURED'
   Object.assign(condition, { field: '', operator: '>', value: '', valueType: 'NUMBER' },
     item.conditionConfig || {})
   revealOnCanvas(node)
@@ -237,9 +251,16 @@ function persistCurrent() {
   if (!config.value || !currentId.value) return
   config.value.decisionConfig = { buttons: buttons.value.filter((b) => b.code) }
   config.value.triggerConfig = trigger.value ? { onEnter: trigger.value } : {}
-  config.value.conditionConfig = condition.field
-    ? { field: condition.field, operator: condition.operator, value: condition.value, valueType: condition.valueType }
-    : {}
+  config.value.conditionConfig = conditionMode.value === 'EXPRESSION'
+    ? (conditionExpression.value.trim() ? { expression: conditionExpression.value.trim() } : {})
+    : (condition.field
+      ? { field: condition.field, operator: condition.operator, value: condition.value, valueType: condition.valueType }
+      : {})
+  // AI 草稿里的数值字段可能是 null；统一归一为数字，避免下游按原始类型解析时失败
+  if (config.value.nodeType === 'userTask') {
+    config.value.signRatio = Number(config.value.signRatio) || 100
+    config.value.timeoutMinutes = Number(config.value.timeoutMinutes) || 0
+  }
   store.set(currentId.value, { ...config.value })
 }
 

@@ -13,13 +13,17 @@ public record WorkflowNodeConfig(
         String assigneeType,
         String assigneeValue,
         String signType,
-        int signRatio,
+        /**
+         * 用包装类型而不是 int：Jackson 3 默认对「显式 null → 基本类型」直接报 400，
+         * 而 AI 生成的节点配置里这些字段经常是 null。构造器里统一兜底。
+         */
+        Integer signRatio,
         String formCode,
         Map<String, Object> fieldPolicy,
         Map<String, Object> decisionConfig,
         Map<String, Object> triggerConfig,
         Map<String, Object> conditionConfig,
-        int timeoutMinutes) {
+        Integer timeoutMinutes) {
 
     public WorkflowNodeConfig {
         if (nodeId == null || nodeId.isBlank()) {
@@ -27,7 +31,8 @@ public record WorkflowNodeConfig(
         }
         assigneeType = assigneeType == null || assigneeType.isBlank() ? "INITIATOR" : assigneeType;
         signType = signType == null || signType.isBlank() ? "SINGLE" : signType;
-        signRatio = signRatio <= 0 ? 100 : Math.min(100, signRatio);
+        signRatio = signRatio == null || signRatio <= 0 ? 100 : Math.min(100, signRatio);
+        timeoutMinutes = timeoutMinutes == null || timeoutMinutes < 0 ? 0 : timeoutMinutes;
         fieldPolicy = fieldPolicy == null ? Map.of() : fieldPolicy;
         decisionConfig = decisionConfig == null ? Map.of() : decisionConfig;
         triggerConfig = triggerConfig == null ? Map.of() : triggerConfig;

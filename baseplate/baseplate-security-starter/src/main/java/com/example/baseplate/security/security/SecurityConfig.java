@@ -31,6 +31,11 @@ public class SecurityConfig {
                 .logout(logout -> logout.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
+                    // SSE 结束时 Tomcat 会再走一次 ASYNC 调度；
+                    // 这里不放行会因为异步线程没有 SecurityContext 而被拒绝，
+                    // 导致 chunked 响应缺少结束块，浏览器一直等不到 EOF。
+                    auth.dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC,
+                            jakarta.servlet.DispatcherType.ERROR).permitAll();
                     properties.getPermitPaths().forEach(path -> auth.requestMatchers(path).permitAll());
                     auth.anyRequest().authenticated();
                 })

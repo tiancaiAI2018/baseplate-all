@@ -10,6 +10,11 @@ spring:
       connection-timeout: 5000
   flyway:
     enabled: false
+  servlet:
+    multipart:
+      # 技能包上传：一个 zip 里可能有多个技能和脚本文件
+      max-file-size: 20MB
+      max-request-size: 50MB
   data:
     redis:
       host: ${BASEPLATE_REDIS_HOST:127.0.0.1}
@@ -28,6 +33,10 @@ baseplate:
     key-prefix: "bp:"
   security:
     trace-header: X-Trace-Id
+  agent:
+    max-iters: 4
+    stream-timeout-seconds: 120
+    skill-dir: ./skills
   identity:
     default-tenant: default
     password-expire-enabled: false

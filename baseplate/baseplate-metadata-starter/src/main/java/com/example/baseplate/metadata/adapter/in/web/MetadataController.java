@@ -62,6 +62,21 @@ public class MetadataController {
         return service.publish(kind, code, version);
     }
 
+    /** 作废：只挡新绑定，已绑定的节点继续渲染原版本。 */
+    @PostMapping("/{kind}/{code}/suspend")
+    @RequiresPermission("meta:publish")
+    @AuditLog(action = "meta:suspend", resource = "meta_schema")
+    public MetadataService.SchemaView suspend(@PathVariable String kind, @PathVariable String code) {
+        return service.suspend(kind, code, true);
+    }
+
+    @PostMapping("/{kind}/{code}/activate")
+    @RequiresPermission("meta:publish")
+    @AuditLog(action = "meta:activate", resource = "meta_schema")
+    public MetadataService.SchemaView activate(@PathVariable String kind, @PathVariable String code) {
+        return service.suspend(kind, code, false);
+    }
+
     /**
      * schema / uiSchema 既接受真正的 JSON 结构，也接受已经序列化过的字符串。
      * 前端把设计器结果直接当对象发过来最自然；要求调用方再 JSON.stringify 一遍是坑，

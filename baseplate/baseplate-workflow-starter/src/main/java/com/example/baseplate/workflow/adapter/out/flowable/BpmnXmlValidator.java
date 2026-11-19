@@ -18,6 +18,12 @@ public final class BpmnXmlValidator {
         reject(lower, "flowable:executionlistener", "禁止执行监听器");
         reject(lower, "flowable:tasklistener", "禁止任务监听器");
         reject(lower, "scripttask", "禁止脚本任务");
+        // 条件表达式只允许表达式语言（JUEL）；带 language 的脚本条件等价于服务端任意代码执行
+        if (java.util.regex.Pattern.compile(
+                "<([a-z0-9_]+:)?conditionexpression\\b[^>]*\\blanguage\\s*=").matcher(lower).find()) {
+            throw new IllegalArgumentException(
+                    "BPMN 校验失败：暂不支持脚本条件，请使用表达式条件（支持 && || 和括号）");
+        }
         // BPMN 2.0 通常带命名空间前缀，如 <bpmn:process>，不能只匹配 <process
         if (!java.util.regex.Pattern.compile("<([a-z0-9_]+:)?process\\b").matcher(lower).find()) {
             throw new IllegalArgumentException("缺少 process 定义");

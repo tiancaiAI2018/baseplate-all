@@ -2,7 +2,7 @@
 
 ## 本文档解决什么
 
-「这个能力对外暴露了哪些接口、要什么权限」。共 **76 个方法级映射**，按模块分组。
+「这个能力对外暴露了哪些接口、要什么权限」。共 **137 个方法级映射**，按模块分组。
 改动任何端点后，必须同步更新本表（见 `INDEX.md` 第六节）。
 
 ---
@@ -183,6 +183,7 @@
 | POST | `/api/workflow/definitions` | `wf:deploy` | 部署 BPMN 2.0 XML；`strategy=KEEP_OLD/MIGRATE_ALL` 决定老实例是否迁移到新版本 |
 | GET | `/api/workflow/definitions` | `wf:view` | **全部版本**（不是只给 latest），带每版运行中/已结束实例数与挂起态 |
 | GET | `/api/workflow/overview` | `wf:view` | 概览数字：定义数、运行中/已结束实例数、已挂起定义数；首页用这个，不要为拿数字拉全量明细 |
+| GET | `/api/workflow/catalog` | `wf:task` | 「发起流程」目录：最新已发布、未挂起、且当前用户有权发起的流程，附发起表单 schema |
 | GET | `/api/workflow/definitions/{processDefinitionId}` | `wf:view` | 定义详情：版本历史、实例统计、节点清单 |
 | GET | `/api/workflow/definitions/{processDefinitionId}/xml` | `wf:view` | 可渲染的 BPMN XML；无 DI 的存量流程自动补坐标 |
 | POST | `/api/workflow/definitions/{processDefinitionId}/suspend` | `wf:manage` | 作废：只挂起定义、不挂起实例，老实例可走完 |
@@ -195,9 +196,12 @@
 | GET | `/api/workflow/instances/{processInstanceId}/detail` | `wf:view` | **运行中/已结束通用详情**：轨迹、变量、操作流水、原因、打回次数、图高亮节点 |
 | GET | `/api/workflow/instances/{processInstanceId}/xml` | `wf:view` | 实例流程图 XML + 已完成/当前/被打回三组节点 ID |
 | POST | `/api/workflow/instances/{processInstanceId}/terminate` | `wf:manage` | 终止运行中实例，原因写入流水 |
+| POST | `/api/workflow/instances/{processInstanceId}/withdraw` | `wf:task` | 发起人撤回自己还在运行中的实例；管理员可代撤 |
 | GET | `/api/workflow/instances/{processInstanceId}/tasks` | `wf:task` | 旧接口：只返回**运行中**任务，已结束实例为空；详情请用 `/detail` |
 | GET | `/api/workflow/tasks` | `wf:task` | 按 `assignee` 查任务（candidateOrAssigned，含加签人） |
 | GET | `/api/workflow/tasks/todo` | `wf:task` | 当前登录人的待办 |
+| GET | `/api/workflow/tasks/done` | `wf:task` | 我的已办：我办理过的历史任务，按办结时间倒序 |
+| GET | `/api/workflow/tasks/{taskId}/detail` | `wf:task` | 办理详情：表单 schema、已填数据、决策按钮、可回退节点；`canHandle` 由服务端按归属判定 |
 | POST | `/api/workflow/tasks/{taskId}/complete` | `wf:task` | 办理；`decision=APPROVE/REJECT`，驳回原因写进流水并计入打回次数 |
 | POST | `/api/workflow/tasks/{taskId}/add-sign` | `wf:task` | 加签：改成候选任务，被加签人能在待办里看到 |
 | POST | `/api/workflow/tasks/{taskId}/transfer` | `wf:task` | 转办 |
@@ -205,11 +209,27 @@
 | GET | `/api/workflow/node-configs` | `wf:view` | 节点结构化配置；`processKey` 必填，`version=0` 表示取最新已部署版本 |
 | PUT | `/api/workflow/node-configs` | `wf:config` | 保存节点配置草稿（找人/签署/表单/决策/触发/条件），部署时由服务端编译进 BPMN |
 | GET | `/api/workflow/node-configs/options` | `wf:view` | 属性面板下拉数据：找人类型、签署类型、角色、组织、已发布表单、运算符、触发动作 |
+| GET | `/api/workflow/process-settings` | `wf:config` | 发起侧配置：发起范围、默认表单等 |
+| PUT | `/api/workflow/process-settings/{processKey}` | `wf:config` | 保存某流程的发起配置 |
+| GET | `/api/workflow/assignee-options` | `wf:task` | 转办/加签/发起范围的人员选项，只暴露最小字段 |
 | GET | `/api/workflow/instances/{processInstanceId}/form-data` | `wf:view` | 该实例各节点提交的表单数据（含租户校验） |
 | GET | `/api/workflow/widgets` | `wf:view` | 组件素材库（可复用表单片段） |
 | POST | `/api/workflow/widgets` | `wf:form` | 保存自定义组件素材，供设计器插入或别的页面单独渲染 |
 | POST | `/api/workflow/lab/init` | `wf:lab` | 幂等初始化演练环境：组织/角色/6 个测试账号/表单/演示流程/节点配置 |
 | GET | `/api/workflow/lab/status` | `wf:lab` | 演练环境状态、账号清单、演示流程版本与隔离验证租户 |
+
+### 流程草稿 `/api/workflow/drafts`
+
+AI 工具创建草稿、设计器载入草稿都走这一组。草稿只存节点/连线，不部署。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/workflow/drafts` | `wf:deploy` | 创建草稿：`processKey/name/description/nodes/edges`；服务端归一化连线并编译 BPMN，返回 `id/bpmnXml/spec` |
+| GET | `/api/workflow/drafts` | `wf:view` | 最近草稿列表，`limit` 默认 20 |
+| GET | `/api/workflow/drafts/{id}` | `wf:view` | 草稿详情：`processKey/name/description/bpmnXml/spec` |
+
+`edges.condition` 支持 `&& || !` 与括号（例如 `${amount >= 5000 && dept == 'SALES'}`）；
+字符串用单引号、数字不加引号；有条件的分支不要标 `isDefault`。
 
 ### 结构化节点配置怎么变成 BPMN
 
@@ -222,6 +242,7 @@
 | 绑定表单 | `flowable:formKey`，办理时 `formData` 落 `wf_form_data` |
 | 决策按钮（同意/驳回 + 是否必填原因 + 最少字数） | `wf_node_config.decision_config`，办理时校验，不通过就 400 |
 | 出线条件（字段 + 运算符 + 值） | `sequenceFlow` 上的 `${field op value}`，字段名走 `[A-Za-z_][A-Za-z0-9_]{0,63}` 白名单，字符串值禁 `'` `$` `}` |
+| 出线条件（表达式模式） | 直接写 `${amount >= 5000 && (dept == 'SALES' || urgent == true)}`，支持 `&& || !` 与括号；禁止带 `language=` 的脚本表达式 |
 
 节点配置按 `(tenant, processKey, version)` 落库，所以**部署新版本不会改到老版本实例的行为**。
 部署接口返回 `version`，前端/脚本可直接用它去查刚存的那套配置。
@@ -247,13 +268,82 @@
 | GET | `/api/metadata/{kind}/{code}` | `meta:view` | 取最新版本 |
 | POST | `/api/metadata/{kind}/{code}` | `meta:edit` | 保存新草稿版本；`schema` / `uiSchema` 传 JSON 对象或 JSON 字符串都行（服务端统一序列化） |
 | POST | `/api/metadata/{kind}/{code}/publish` | `meta:publish` | 发布（`PUBLISHED`） |
+| POST | `/api/metadata/{kind}/{code}/suspend` | `meta:publish` | 作废整个定义（按 code 全版本）；只挡新绑定，已绑定节点仍按原样渲染 |
+| POST | `/api/metadata/{kind}/{code}/activate` | `meta:publish` | 恢复启用 |
 | GET | `/api/metadata/{kind}/{code}/render` | `meta:view` | 取渲染所需的 `schema + uiSchema` |
 
 Schema 有字段白名单，禁 `script` / `expression` 类键。
 
 ---
 
-## 十五、运维端点
+## 十五、智能体 `/api/agent`
+
+### 对话与恢复
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/api/agent/chat/stream` | `agent:chat` | SSE 对话；body `{agentCode?, sessionId?, pageKey, message}`，`pageKey` 必填 |
+| GET | `/api/agent/chat/bootstrap` | `agent:chat` | 当前页可用 Agent；没有返回 `enabled=false` |
+| POST | `/api/agent/hitl/{id}/decision` | `agent:chat` | HITL 决策（同意/拒绝），返回 SSE 继续同一会话 |
+| GET | `/api/agent/hitl/pending` | `agent:chat` | 会话内待审批项，刷新后恢复审批卡 |
+| POST | `/api/agent/external-calls/{callId}/result` | `agent:chat` | 外部工具执行结果回传，返回 SSE 恢复模型 |
+
+### 会话
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/agent/sessions` | `agent:session:view` | 我的会话；`all=true` 仅管理员可看全部 |
+| GET | `/api/agent/sessions/{id}/messages` | `agent:session:view` | 历史消息与 blocks |
+| DELETE | `/api/agent/sessions/{id}` | `agent:session:view` | 逻辑删除自己的会话 |
+
+### 配置
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/agent/definitions` | `agent:config:view` | 定义列表 |
+| POST | `/api/agent/definitions` | `agent:config:edit` | 新建 |
+| PUT | `/api/agent/definitions/{id}` | `agent:config:edit` | 修改；revision 变化会让运行时缓存失效 |
+| DELETE | `/api/agent/definitions/{id}` | `agent:config:edit` | 删除 |
+| GET | `/api/agent/definitions/{id}/tools` | `agent:config:view` | 工具目录 + 当前策略 |
+| PUT | `/api/agent/definitions/{id}/tools` | `agent:config:edit` | 保存工具启停/审批策略 |
+| GET | `/api/agent/definitions/{id}/skills` | `agent:config:view` | 技能索引 + 绑定状态 |
+| PUT | `/api/agent/definitions/{id}/skills` | `agent:config:edit` | 保存技能绑定 |
+| POST | `/api/agent/definitions/{id}/test` | `agent:config:edit` | 真实调用一次模型，返回耗时 |
+
+### 技能与工具目录
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/agent/skills` | `agent:config:view` | 技能列表 |
+| POST | `/api/agent/skills/rescan` | `agent:config:edit` | 重新扫描 skills 目录 |
+| GET | `/api/agent/skills/{skillName}` | `agent:config:view` | 技能正文 |
+| POST | `/api/agent/skills` | `agent:config:edit` | 在线新建 |
+| PUT | `/api/agent/skills/{skillName}` | `agent:config:edit` | 在线编辑 |
+| DELETE | `/api/agent/skills/{skillName}` | `agent:config:edit` | 删除（含索引） |
+| POST | `/api/agent/skills/upload` | `agent:config:edit` | zip 导入（可含多个技能目录） |
+| POST | `/api/agent/skills/upload-folder` | `agent:config:edit` | 文件夹导入 |
+| GET | `/api/agent/tools/directory` | `agent:config:view` | 工具目录（代码声明 + 库内自定义） |
+| POST | `/api/agent/tools/directory` | `agent:config:edit` | 新增自定义工具 |
+| PUT | `/api/agent/tools/directory/{toolCode}` | `agent:config:edit` | 修改 |
+| DELETE | `/api/agent/tools/directory/{toolCode}` | `agent:config:edit` | 删除 |
+
+### SSE 事件
+
+| 事件 | 说明 |
+|---|---|
+| `session` | 会话信息（sessionId / agentCode / agentName） |
+| `text` / `thinking` | 正文 / 思考增量 |
+| `tool_call` / `tool_result` | 工具调用与结果；`phase=start/delta/end` |
+| `skill` | 加载技能 |
+| `hitl` / `hitl_resolved` | 需确认 / 决策结果 |
+| `external_tool_call` | 外部工具参数下发 |
+| `external_wait` / `external_result` | 多调用等待 / 单个结果回传 |
+| `ui` | 前端渲染指令：`kind=task_list` / `workflow_preview` 等 |
+| `error` / `done` | 错误与收尾；`done.paused=true` 表示停在 HITL 或外部调用 |
+
+工具按 `pageKey` + 用户权限点 + Agent 绑定过滤；外部工具结果里的 `ui` 只下发前端，不进入模型上下文。
+
+## 十六、运维端点
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -263,7 +353,7 @@ Schema 有字段白名单，禁 `script` / `expression` 类键。
 
 ---
 
-## 十六、开放平台调用方式（给第三方看）
+## 十七、开放平台调用方式（给第三方看）
 
 这一节可以直接复制给接入方。
 
