@@ -150,8 +150,7 @@ async function start() {
     const { data } = await http.post('/api/workflow/instances', {
       processKey: PROCESS_KEY,
       businessKey: 'LAB-' + Date.now(),
-      formCode: FORM_CODE,
-      formData: values,
+      formDataByCode: { [FORM_CODE]: values },
       variables: { initiator: userIds.value['zhangsan'] }
     })
     ElMessage.success('已发起：' + data.processInstanceId)
@@ -181,7 +180,10 @@ async function complete(task: any, decision: string) {
       reason = value
     }
     await http.post(`/api/workflow/tasks/${task.taskId}/complete`, {
-      decision, values: { reason, formData: formData.value }
+      decision, values: {
+        reason,
+        formDataByCode: { [FORM_CODE]: renderer.value?.formData?.() || formData.value }
+      }
     })
     ElMessage.success('已办理')
     await loadTasks(currentAccount.value)
@@ -203,7 +205,7 @@ async function autoVerify() {
     const values = { days: 5, reason: '自动验证', startDate: '2026-11-20' }
     const started = await http.post('/api/workflow/instances', {
       processKey: PROCESS_KEY, businessKey: 'AUTO-' + Date.now(),
-      formCode: FORM_CODE, formData: values, variables: { initiator: ids['zhangsan'] }
+      formDataByCode: { [FORM_CODE]: values }, variables: { initiator: ids['zhangsan'] }
     })
     const iid = started.data.processInstanceId
 

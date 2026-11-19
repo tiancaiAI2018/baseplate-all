@@ -29,9 +29,16 @@
 
         <el-tabs v-model="tab">
           <el-tab-pane label="表单与审批" name="handle">
-            <div v-if="formRules.length" class="form-wrap">
-              <FormRenderer ref="rendererRef" :rule="formRules" :model-value="detail.formData || {}"
-                            :readonly="!detail.canHandle" />
+            <div v-if="formViews.length" class="form-wrap">
+              <div v-for="form in formViews" :key="form.formCode" class="form-section">
+                <div class="form-section-title">
+                  <span>{{ form.formName || form.formCode }}</span>
+                  <el-tag v-if="form.base" size="small" type="info" effect="plain">基础表单</el-tag>
+                </div>
+                <FormRenderer :ref="(el: any) => setRenderer(form.formCode, el)"
+                              :rule="rulesOf(form.formCode)" :model-value="form.formData || {}"
+                              :readonly="!detail.canHandle" />
+              </div>
             </div>
             <el-empty v-else description="该节点没有配置表单，直接给出审批结论即可" :image-size="60" />
 
@@ -151,7 +158,12 @@ const detail = ref<any>(null)
 const tab = ref('handle')
 const reason = ref('')
 const submitting = ref('')
-const rendererRef = ref<InstanceType<typeof FormRenderer> | null>(null)
+// 多表单：每个 formCode 一个 renderer 实例，提交时逐个校验+收集数据
+const rendererRefs = new Map<string, InstanceType<typeof FormRenderer>>()
+function setRenderer(code: string, el: any) {
+  if (el) rendererRefs.set(code, el)
+  else rendererRefs.delete(code)
+}
 
 const transferOpen = ref(false)
 const transferTo = ref('')
@@ -182,24 +194,31 @@ const buttons = computed(() => {
   ]
 })
 
-// 节点字段策略：READONLY 的字段在办理页置灰，HIDDEN 的直接不渲染。
-// 策略来自节点配置，前端只做展示约束，真正的校验在后端 complete 里。
-const formRules = computed(() => {
-  const raw = detail.value?.formUiSchema
+// 多表单视图：后端已按每份表单各自裁剪数据（HIDDEN 不下发值），
+// 这里只做展示约束（HIDDEN 不渲染、READONLY 置灰），真正的防线在后端 FieldPolicyService。
+const formViews = computed<any[]>(() => detail.value?.formDefinitions || [])
+
+function parseUiSchema(raw: any): any[] {
   if (!raw) return []
   let parsed: any = raw
   if (typeof parsed === 'string') {
     try { parsed = JSON.parse(parsed) } catch { return [] }
   }
   const list: any[] = Array.isArray(parsed) ? parsed : parsed?.rule
-  if (!Array.isArray(list)) return []
-  const policy = detail.value?.nodeConfig?.fieldPolicy || {}
-  return list
+  return Array.isArray(list) ? list : []
+}
+
+function rulesOf(code: string): any[] {
+  const form = formViews.value.find((f) => f.formCode === code)
+  if (!form) return []
+  // 二维策略：先按 formCode 取子表，再按字段取权限
+  const policy = detail.value?.nodeConfig?.fieldPolicy?.[code] || {}
+  return parseUiSchema(form.formUiSchema)
     .filter((item: any) => policy[item.field] !== 'HIDDEN')
     .map((item: any) => policy[item.field] === 'READONLY'
       ? { ...item, props: { ...(item.props || {}), disabled: true } }
       : item)
-})
+}
 
 const rollbackOptions = computed(() => (detail.value?.rollbackTargets || []).map((id: string) => ({
   id, label: rollbackNodeNames.value[id] ? `${rollbackNodeNames.value[id]}（${id}）` : id
@@ -213,6 +232,7 @@ async function load() {
   detail.value = null
   reason.value = ''
   tab.value = 'handle'
+  rendererRefs.clear()
   ensureLoaded()
   try {
     const { data } = await http.get(`/api/workflow/tasks/${props.taskId}/detail`)
@@ -236,14 +256,25 @@ async function submit(button: any) {
   }
   submitting.value = button.code
   try {
-    if (formRules.value.length && rendererRef.value?.validate) {
-      try { await rendererRef.value.validate() } catch {
-        ElMessage.warning('表单还有未通过校验的字段，请先补全')
-        return
+    // 逐个表单校验；只读表单 disabled 字段不参与填写，后端仍按权限裁剪
+    for (const form of formViews.value) {
+      const renderer: any = rendererRefs.get(form.formCode)
+      if (renderer?.validate) {
+        try { await renderer.validate() } catch {
+          ElMessage.warning(`「${form.formName || form.formCode}」有未通过校验的字段，请先补全`)
+          return
+        }
       }
     }
     const values: Record<string, any> = { reason: text, comment: text }
-    if (formRules.value.length) values.formData = rendererRef.value?.formData?.() || {}
+    const formDataByCode: Record<string, any> = {}
+    for (const form of formViews.value) {
+      const renderer: any = rendererRefs.get(form.formCode)
+      if (renderer?.formData) {
+        formDataByCode[form.formCode] = renderer.formData()
+      }
+    }
+    values.formDataByCode = formDataByCode
     await http.post(`/api/workflow/tasks/${props.taskId}/complete`, { decision: button.code, values })
     ElMessage.success(`已${button.label || (button.code === 'REJECT' ? '驳回' : '同意')}`)
     emit('handled')
@@ -322,7 +353,10 @@ async function confirmRollback() {
 .hero-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .hero-tags { display: flex; gap: 8px; flex: none; }
 .sec-title { margin: 18px 0 10px; font-size: 14px; }
-.form-wrap { border: 1px solid var(--bp-line); border-radius: 12px; padding: 18px 20px 6px; background: #FBFCFB; }
+.form-wrap { border: 1px solid var(--bp-line); border-radius: 12px; padding: 8px 20px 6px; background: #FBFCFB; }
+.form-section { padding: 10px 0 14px; border-bottom: 1px dashed var(--bp-line); }
+.form-section:last-child { border-bottom: none; }
+.form-section-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: #1C1B18; margin-bottom: 10px; }
 .decision-row { display: flex; gap: 12px; margin-top: 16px; }
 .extra-actions { display: flex; align-items: center; gap: 4px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--bp-line); }
 .drawer-foot { display: flex; align-items: center; justify-content: space-between; width: 100%; }

@@ -92,12 +92,12 @@ npm run dev        # http://127.0.0.1:5173，/api 由 Vite 代理到 8080
 
 | 类型 | 执行位置 | 例子 | 权限 |
 |---|---|---|---|
-| 内部工具 | 服务端 | `workflow_list_my_tasks`、`workflow_task_detail`、`form_get_draft`、`platform_whoami` | 工具代码里按用户权限点校验 |
-| 外部工具 | 浏览器 | `workflow_get_canvas`、`workflow_create_draft`、`workflow_complete_task`、`workflow_rollback_task`、`form_get_canvas`、`form_create_draft` | 前端带用户令牌调用业务接口，复用 HTTP 权限与审计 |
+| 内部工具 | 服务端 | `workflow_list_my_tasks`、`workflow_list_my_started`、`workflow_instance_progress`、`workflow_list_my_done`、`workflow_my_summary`、`workflow_task_detail`、`form_get_draft`、`platform_whoami` | 工具代码里按用户权限点校验 |
+| 外部工具 | 浏览器 | `workflow_get_canvas`、`workflow_create_draft`、`form_get_canvas`、`form_create_draft` | 前端带用户令牌调用业务接口，复用 HTTP 权限与审计 |
 
 关键设计：
 
-- **写操作不直连端口**：同意/驳回/打回、创建草稿都由前端调现有 REST 接口，`requireOwnedTask`、`@RequiresPermission`、`@AuditLog` 全部照常生效
+- **AI 不代签**：同意/驳回/打回不再提供工具，办理由用户在办理抽屉确认；只有必须打开浏览器的创建草稿做成外部工具，`@RequiresPermission`、`@AuditLog` 照常生效
 - **页面作用域**：工具声明 `pages`，运行时不匹配当前 `pageKey` 的 schema 不会进模型上下文；会话继续时同步 `session.page_key`，避免恢复流报 `Tool not found`
 - **HITL**：审批策略为 `ASK` 的工具先落审批单，用户同意后带 `ConfirmResult` 恢复同一会话
 - **外部工具结果回传**：前端执行完调用 `/api/agent/external-calls/{callId}/result`，服务端恢复 SSE；多个调用按 `replyId` 收齐后再恢复
@@ -108,7 +108,8 @@ npm run dev        # http://127.0.0.1:5173，/api 由 Vite 代理到 8080
 
 | 分组 | 工具 |
 |---|---|
-| 工作流 | `workflow_list_definitions`、`workflow_get_draft`、`workflow_list_my_tasks`、`workflow_task_detail`、`workflow_create_draft`、`workflow_get_canvas`、`workflow_complete_task`、`workflow_rollback_task` |
+| 工作流（个人） | `workflow_list_my_tasks`、`workflow_task_detail`、`workflow_list_my_started`、`workflow_instance_progress`、`workflow_list_my_done`、`workflow_my_summary` |
+| 工作流（设计） | `workflow_list_definitions`、`workflow_get_draft`、`workflow_create_draft`、`workflow_get_canvas` |
 | 表单 | `form_list_definitions`、`form_get_draft`、`form_get_canvas`、`form_create_draft` |
 | 平台 | `platform_whoami`、`platform_current_time` |
 

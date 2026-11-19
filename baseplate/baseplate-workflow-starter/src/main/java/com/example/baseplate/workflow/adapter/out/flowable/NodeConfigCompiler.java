@@ -1,6 +1,7 @@
 package com.example.baseplate.workflow.adapter.out.flowable;
 
 import com.example.baseplate.api.model.WorkflowNodeConfig;
+import com.example.baseplate.workflow.application.RejectRouteSupport;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -84,11 +85,10 @@ public final class NodeConfigCompiler {
     private void applyUserTask(Document doc, Element task, WorkflowNodeConfig config) {
         task.removeAttributeNS(FLOWABLE_NS, "assignee");
         task.removeAttributeNS(FLOWABLE_NS, "candidateUsers");
+        // 多表单：BPMN formKey 是单值且全项目无人消费，表单绑定统一由 wf_node_config.form_codes
+        // + wf_process_setting.base_form_codes 驱动，这里只清理存量 formKey，不再写入。
         task.removeAttributeNS(FLOWABLE_NS, "formKey");
         removeChildren(task, "multiInstanceLoopCharacteristics");
-        if (config.formCode() != null && !config.formCode().isBlank()) {
-            task.setAttributeNS(FLOWABLE_NS, "flowable:formKey", config.formCode());
-        }
         String sign = config.signType().toUpperCase(Locale.ROOT);
         boolean sequential = "SEQUENTIAL".equals(sign);
         boolean counter = "COUNTERSIGN".equals(sign) || sequential;
@@ -137,47 +137,75 @@ public final class NodeConfigCompiler {
 
     private void applyCondition(Document doc, Element flow, WorkflowNodeConfig config) {
         Map<String, Object> condition = config.conditionConfig();
-        // 自由表达式优先：面板切到「表达式」模式时只填 expression，
-        // 支持 && || 和括号，由 Flowable 的表达式引擎求值
+        boolean rejectRoute = RejectRouteSupport.isRejectRoute(condition);
+        // 配置从「驳回路由」改回普通条件线时，旧扩展属性必须一并清掉，不能留脏数据
+        flow.removeAttributeNS(FLOWABLE_NS, RejectRouteSupport.REJECT_ROUTE_ATTR);
+        flow.removeAttributeNS(FLOWABLE_NS, RejectRouteSupport.REJECT_CONDITION_ATTR);
+
+        String expression = conditionExpression(condition, config.nodeId(), rejectRoute);
+        if (rejectRoute) {
+            // 显式标记：运行期据此识别驳回路由，不靠「目标是不是前面的节点」猜
+            flow.setAttributeNS(FLOWABLE_NS, "flowable:" + RejectRouteSupport.REJECT_ROUTE_ATTR, "true");
+            if (expression != null) {
+                // 保真原始条件：前端回读设计时用它还原，运行期驳回时用它求值
+                flow.setAttributeNS(FLOWABLE_NS,
+                        "flowable:" + RejectRouteSupport.REJECT_CONDITION_ATTR, expression);
+            }
+            // 正向流转守卫：APPROVE 时 decision 恒不等于 REJECT，引擎不会沿回退线绕回去
+            writeCondition(doc, flow, RejectRouteSupport.guardedExpression(expression));
+        } else if (expression == null) {
+            removeChildren(flow, "conditionExpression");
+        } else {
+            writeCondition(doc, flow, expression);
+        }
+    }
+
+    /**
+     * 从结构化条件或自由表达式算出原始表达式。驳回路由允许不配条件（=无条件命中），
+     * 普通条件线仍按原规则要求字段/值完整，保持存量行为不变。
+     */
+    private String conditionExpression(Map<String, Object> condition, String nodeId, boolean allowEmpty) {
+        // 自由表达式优先：面板切到「表达式」模式时只填 expression
         Object rawExpression = condition.get("expression");
         if (rawExpression != null && !String.valueOf(rawExpression).isBlank()) {
-            applyExpression(doc, flow, config, String.valueOf(rawExpression).trim());
-            return;
+            String expression = String.valueOf(rawExpression).trim();
+            if (expression.startsWith("${")) {
+                if (!expression.endsWith("}")) {
+                    throw new IllegalArgumentException("连线 " + nodeId + " 的条件缺少右花括号");
+                }
+            } else {
+                expression = "${" + expression + "}";
+            }
+            if (expression.length() > 1000) {
+                throw new IllegalArgumentException("连线 " + nodeId + " 的条件过长（最多 1000 字符）");
+            }
+            return expression;
         }
         String field = String.valueOf(condition.getOrDefault("field", ""));
         String operator = String.valueOf(condition.getOrDefault("operator", ""));
         String valueType = String.valueOf(condition.getOrDefault("valueType", "STRING"));
         Object rawValue = condition.get("value");
         if (!FIELD.matcher(field).matches() || !OPERATORS.contains(operator) || rawValue == null) {
-            throw new IllegalArgumentException("连线 " + config.nodeId() + " 的条件配置不完整或不合法");
+            if (allowEmpty) {
+                return null;
+            }
+            throw new IllegalArgumentException("连线 " + nodeId + " 的条件配置不完整或不合法");
         }
         String literal;
         if (NUMERIC_TYPES.contains(valueType.toUpperCase(Locale.ROOT))) {
             try {
                 literal = String.valueOf(new java.math.BigDecimal(String.valueOf(rawValue)).stripTrailingZeros());
             } catch (NumberFormatException ex) {
-                throw new IllegalArgumentException("连线 " + config.nodeId() + " 的条件值不是数字");
+                throw new IllegalArgumentException("连线 " + nodeId + " 的条件值不是数字");
             }
         } else {
             String text = String.valueOf(rawValue);
             if (text.length() > 128 || text.contains("'") || text.contains("$") || text.contains("}")) {
-                throw new IllegalArgumentException("连线 " + config.nodeId() + " 的条件值含非法字符");
+                throw new IllegalArgumentException("连线 " + nodeId + " 的条件值含非法字符");
             }
             literal = "'" + text + "'";
         }
-        writeCondition(doc, flow, "${" + field + " " + operator + " " + literal + "}");
-    }
-
-    /** 表达式条件：只做包装与长度校验，语法交给流程引擎。 */
-    private void applyExpression(Document doc, Element flow, WorkflowNodeConfig config, String raw) {
-        String expression = raw.startsWith("${") ? raw : "${" + raw + "}";
-        if (!expression.endsWith("}")) {
-            throw new IllegalArgumentException("连线 " + config.nodeId() + " 的条件缺少右花括号");
-        }
-        if (expression.length() > 1000) {
-            throw new IllegalArgumentException("连线 " + config.nodeId() + " 的条件过长（最多 1000 字符）");
-        }
-        writeCondition(doc, flow, expression);
+        return "${" + field + " " + operator + " " + literal + "}";
     }
 
     private void writeCondition(Document doc, Element flow, String expression) {

@@ -73,6 +73,12 @@ public final class FormAgentToolProvider implements AgentToolProvider {
                         - 字段类型只能使用 input/textarea/number/slider/date/datetime/switch/
                           select/radio/checkbox/upload/editor，未知类型会退化为单行文本；
                         - 字段名只能用小写字母、数字、下划线，且不能是 script/eval/expression/class 这类保留词；
+                        - 字段名一旦发布会被流程节点引用（找人、网关条件、字段权限都按字段名匹配），
+                          修改已有表单时尽量保持字段名不变，改名会导致这些配置失效；
+                        - 字段的只读/隐藏权限不在表单里设置，而是在流程节点的 config.fieldPolicy 里按节点配置：
+                          它是二维结构 {表单编码: {字段名: EDITABLE/READONLY/HIDDEN}}，
+                          同一个字段在发起人节点可编辑、在审批节点只读，由流程设计器负责；
+                          表单可以有多份：流程级基础表单所有节点自动继承，节点还能追加自己的表单；
                         - select/radio/checkbox 必须提供 options。
                         调用成功只代表草稿已打开，不要声称已发布；发布由用户在设计器确认。
                         如果返回失败，请根据失败原因修正参数后重新调用，不要直接结束回复。""",

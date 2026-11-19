@@ -18,8 +18,26 @@ version: 1
    - 字段名用小写英文＋下划线，例如 `leave_days`
    - 类型只用 input / textarea / number / slider / date / datetime / switch / select / radio / checkbox / upload / editor
    - select / radio / checkbox 必须给 options
+   - 字段名要稳定：流程里的找人、网关条件、字段权限都按字段名匹配，改字段名会让这些配置失效
 3. 调用 `form_create_draft`，前端会打开表单设计器
 4. 只说到「草稿已打开」为止，发布由用户点「保存并发布」
+
+## 字段权限由流程节点决定
+
+字段的「只读 / 隐藏 / 可编辑」不在表单里设置，而是流程节点按需要配的。
+`config.fieldPolicy` 是二维结构：`{表单编码: {字段名: EDITABLE/READONLY/HIDDEN}}`。
+例如用户说「薪资字段普通审批人看不到」，正确做法是：
+
+1. 在本技能里正常把 `salary` 字段建出来（表单只负责定义字段长什么样）
+2. 提示用户到流程设计器里，把相关审批节点上这张表的 `salary` 设成 HIDDEN；
+   或让流程设计能力（流程设计技能）配
+   `{"expense_form": {"salary": "HIDDEN"}}`
+
+不要拒绝建这个字段，也不要试图在表单字段上加只读/隐藏属性——表单层没有这个能力。
+
+一个流程可以有多份表单：流程级基础表单（发起配置里多选）所有节点自动继承，
+节点还能通过 `config.formCodes` 追加自己的专属表单（如只在财务节点出现的复核意见表）。
+表单设计技能只负责产出字段清单，绑定和权限由流程设计技能负责。
 
 ## 边界
 

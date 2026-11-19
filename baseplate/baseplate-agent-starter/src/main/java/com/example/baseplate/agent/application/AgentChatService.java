@@ -564,14 +564,43 @@ public final class AgentChatService {
      * 对模型没有增量信息还会占用上下文；正文里剔除，单独走 ui 事件。
      */
     private String stripUi(String json) {
+        Map<?, ?> parsed = parsePayload(json);
+        if (parsed == null) {
+            return json;
+        }
+        Map<String, Object> copy = new LinkedHashMap<>();
+        parsed.forEach((key, value) -> copy.put(String.valueOf(key), value));
+        copy.remove("ui");
         try {
-            Map<String, Object> parsed = mapper.readValue(json, Map.class);
-            if (parsed.remove("ui") == null) {
-                return json;
-            }
-            return mapper.writeValueAsString(parsed);
+            // 返回剥过壳的 JSON：即使没有 ui，也把 SDK 多加的那层字符串去掉，
+            // 否则模型看到的是一整段带转义的文本，读起来费力也更容易抄错
+            return mapper.writeValueAsString(copy);
         } catch (RuntimeException e) {
             return json;
+        }
+    }
+
+    /**
+     * 工具返回的 JSON 可能被 SDK 再序列化一层：直接 readValue 出来是 String 而不是 Map。
+     * 实测 tool_result 的 delta 是 {@code "{\"total\":3,...}"}，不剥壳就永远拿不到 ui。
+     * 最多剥三层，防止异常数据里出现无限套娃。
+     */
+    private Map<?, ?> parsePayload(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            Object value = mapper.readValue(raw, Object.class);
+            for (int depth = 0; depth < 3 && value instanceof String text; depth++) {
+                String trimmed = text.trim();
+                if (!trimmed.startsWith("{")) {
+                    return null;
+                }
+                value = mapper.readValue(trimmed, Object.class);
+            }
+            return value instanceof Map<?, ?> map ? map : null;
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 
@@ -821,11 +850,11 @@ public final class AgentChatService {
         if (buffer == null || buffer.isEmpty()) {
             return;
         }
+        Map<?, ?> parsed = parsePayload(buffer.toString());
+        if (parsed == null || !(parsed.get("ui") instanceof Map<?, ?> ui)) {
+            return;
+        }
         try {
-            Map<?, ?> parsed = mapper.readValue(buffer.toString(), Map.class);
-            if (!(parsed.get("ui") instanceof Map<?, ?> ui)) {
-                return;
-            }
             Map<String, Object> payload = new LinkedHashMap<>();
             ui.forEach((key, value) -> payload.put(String.valueOf(key), value));
             payload.put("tool", mapped.data().get("tool"));

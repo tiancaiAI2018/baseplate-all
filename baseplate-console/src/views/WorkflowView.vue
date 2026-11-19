@@ -23,7 +23,7 @@
         </div>
         <el-row :gutter="14">
           <el-col :span="15"><div class="wf-canvas" ref="canvasRef"></div></el-col>
-          <el-col :span="9"><NodeConfigPanel ref="panelRef" :modeler="designerModel" /></el-col>
+          <el-col :span="9"><NodeConfigPanel ref="panelRef" :modeler="designerModel" :process-key="processKey" /></el-col>
         </el-row>
         <div class="wf-step" style="margin-top: 16px">
           <div class="no">1</div>
@@ -115,8 +115,17 @@
                   </el-select>
                 </el-form-item>
                 <el-form-item label="业务表单">
-                  <FormRenderer ref="startRenderer" :rule="startFormRule" v-model="startFormData" />
-                  <span v-if="!startFormRule?.length" class="hint">该流程还没绑定表单，可在「流程表单」里设计并在节点属性里绑定。</span>
+                  <div class="admin-form-wrap">
+                    <div v-for="form in startFormViews" :key="form.formCode" class="admin-form-section">
+                      <div class="admin-form-title">
+                        <span>{{ form.name || form.formCode }}</span>
+                        <el-tag v-if="form.base" size="small" type="info" effect="plain">基础表单</el-tag>
+                      </div>
+                      <FormRenderer :ref="(el: any) => setStartRenderer(form.formCode, el)" :rule="form.rule"
+                                    :model-value="form.values || {}" />
+                    </div>
+                  </div>
+                  <span v-if="!startFormViews.length" class="hint">该流程还没绑定表单，可在「流程表单」里设计并在流程发起配置里设为基础表单。</span>
                 </el-form-item>
                 <el-button type="primary" @click="startInstance">发起实例</el-button>
               </el-form>
@@ -310,10 +319,11 @@
               <template v-else>{{ signLabel(row.signType) }}<span v-if="row.signRatio < 100"> · {{ row.signRatio }}%</span></template>
             </template>
           </el-table-column>
-          <el-table-column label="绑定表单" width="150">
+          <el-table-column label="新增表单" min-width="180">
             <template #default="{ row }">
-              <span v-if="row.formCode">{{ row.formCode }}</span>
-              <span v-else class="hint">—</span>
+              <el-tag v-for="code in (row.formCodes || [])" :key="code" size="small" effect="plain"
+                      style="margin: 2px 4px 2px 0">{{ code }}</el-tag>
+              <span v-if="!(row.formCodes || []).length" class="hint">—（仅继承基础表单）</span>
             </template>
           </el-table-column>
           <el-table-column label="决策按钮" min-width="180">
@@ -404,7 +414,7 @@
     </el-drawer>
 
     <ProcessSettingDialog v-model="settingOpen" :process-key="settingKey" :process-name="settingName"
-                          @saved="loadSettings" />
+                          @saved="onSettingSaved" />
   </div>
 </template>
 
@@ -418,7 +428,7 @@ import FormRenderer from './FormRenderer.vue'
 import ProcessSettingDialog from '../components/ProcessSettingDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Grid } from '@element-plus/icons-vue'
-import { layoutBpmnXml } from '../utils/bpmnLayout'
+import { layoutBpmnXml, stripCompiledListeners } from '../utils/bpmnLayout'
 import { bpmnToSpec } from '../utils/bpmnSpec'
 import { registerAgentCanvas } from '../api/agentCanvas'
 import http, { errorText } from '../api/client'
@@ -447,10 +457,13 @@ let disposeCanvasProvider: (() => void) | null = null
 // 右侧节点面板拿到的就是代理对象，engine.get('elementRegistry') 内部身份判断失败 → 节点列表永远空
 const designerModel = shallowRef<any>(null)
 const panelRef = ref<any>(null)
-const startRenderer = ref<any>(null)
-const startFormRule = ref<any[]>([])
-const startFormData = ref<Record<string, any>>({})
-const startFormCode = ref('')
+// 管理端发起页同样按多表单渲染：每份表单一个 renderer，提交时按 formCode 分桶
+const startFormViews = ref<any[]>([])
+const startRendererRefs = new Map<string, any>()
+function setStartRenderer(code: string, el: any) {
+  if (el) startRendererRefs.set(code, el)
+  else startRendererRefs.delete(code)
+}
 const defNodeConfigs = ref<any[]>([])
 let defViewer: any = null
 let instViewer: any = null
@@ -487,6 +500,13 @@ async function loadSettings() {
     for (const item of data || []) map[item.processKey] = item
     processSettings.value = map
   } catch { processSettings.value = {} }
+}
+
+async function onSettingSaved() {
+  await loadSettings()
+  // 基础表单刚改过：右侧节点面板要立刻刷新锁定列表，否则界面还显示旧的表单
+  panelRef.value?.reloadBaseForms?.()
+  if (startForm.processKey === settingKey.value) await loadStartForm()
 }
 
 const SCOPE_TEXT: Record<string, string> = { ALL: '所有人', ROLE: '指定角色', USER: '指定人员', ORG: '指定组织' }
@@ -628,7 +648,15 @@ async function confirmDeploy() {
     }
     await loadDefinitions()
   } catch (error) {
-    ElMessage.error(errorText(error))
+    const message = errorText(error)
+    // 部署校验一次会列出多条连线，ElMessage 会被长文本撑满整行，改用可换行弹窗
+    if (message.length > 60) {
+      await ElMessageBox.alert(message, '部署未通过', {
+        type: 'error', customStyle: { maxWidth: '620px' }
+      })
+    } else {
+      ElMessage.error(message)
+    }
   } finally {
     deploying.value = false
   }
@@ -724,30 +752,58 @@ async function editDefinition() {
   if (!defDetail.value) return
   const { data } = await http.get(`/api/workflow/definitions/${defDetail.value.id}/xml`)
   processKey.value = defDetail.value.key
+  // 已部署定义的 XML 是编译产物，含服务端注入的 wfAssigneeResolver 监听器；
+  // 直接回填再部署会撞 BpmnXmlValidator 的 taskListener 黑名单，先剥离掉。
+  const designXml = stripCompiledListeners(data.xml)
   // 必须先切到设计 tab 并等它拿到尺寸，否则画布宽高是 0，importXML 里的 fit-viewport 会抛异常
   defOpen.value = false
   activeTab.value = 'design'
   await nextTick()
   await waitCanvasSized(canvasRef.value)
-  await modeler.importXML(data.xml)
+  await modeler.importXML(designXml)
   fitViewport()
   panelRef.value?.refreshNodes?.()
   panelRef.value?.loadConfigs?.(defNodeConfigs.value)
   ElMessage.success('已载入设计器；改完点「部署当前图」生成新版本')
 }
 
+/**
+ * 管理端发起预览：优先用流程级基础表单；没配时兜底取所有任务节点新增表单（与后端 catalog 同口径）。
+ */
 async function loadStartForm() {
-  if (!startForm.processKey) { startFormRule.value = []; startFormCode.value = ''; return }
+  startFormViews.value = []
+  startRendererRefs.clear()
+  const key = startForm.processKey
+  if (!key) return
   try {
-    const cfg = await http.get('/api/workflow/node-configs',
-      { params: { processKey: startForm.processKey } })
-    const first = (cfg.data || []).find((item: any) => item.formCode)
-    startFormCode.value = first?.formCode || ''
-    if (!startFormCode.value) { startFormRule.value = []; return }
-    const { data } = await http.get(`/api/metadata/FORM/${startFormCode.value}`)
-    startFormRule.value = data.uiSchemaJson || '[]'
-  } catch { startFormRule.value = [] }
+    const [settingRes, cfg] = await Promise.all([
+      http.get('/api/workflow/process-settings'),
+      http.get('/api/workflow/node-configs', { params: { processKey: key } })
+    ])
+    const setting = (settingRes.data || []).find((s: any) => s.processKey === key)
+    let codes: string[] = Array.isArray(setting?.baseFormCodes) ? [...setting.baseFormCodes] : []
+    if (!codes.length) {
+      for (const item of cfg.data || []) {
+        if (item.nodeType !== 'userTask' || !Array.isArray(item.formCodes)) continue
+        for (const code of item.formCodes) if (code && !codes.includes(code)) codes.push(code)
+      }
+    }
+    for (const code of codes) {
+      const { data } = await http.get(`/api/metadata/FORM/${code}`)
+      startFormViews.value.push({
+        formCode: code,
+        name: data.name || code,
+        rule: data.uiSchemaJson || '[]',
+        values: {},
+        base: true
+      })
+    }
+  } catch {
+    startFormViews.value = []
+  }
 }
+
+watch(() => startForm.processKey, () => { loadStartForm() })
 
 async function loadDefXml() {
   if (!defVersionId.value) return
@@ -824,12 +880,15 @@ async function startInstance() {
       return
     }
     const variables: any = { assignee: startForm.assignee }
-    const values = startRenderer.value?.formData?.() || startFormData.value
+    const formDataByCode: Record<string, any> = {}
+    for (const form of startFormViews.value) {
+      const renderer: any = startRendererRefs.get(form.formCode)
+      if (renderer?.formData) formDataByCode[form.formCode] = renderer.formData()
+    }
     await http.post('/api/workflow/instances', {
       processKey: startForm.processKey,
       businessKey: startForm.businessKey || 'BIZ-' + Date.now(),
-      formCode: startFormCode.value || undefined,
-      formData: values,
+      formDataByCode,
       variables
     })
     ElMessage.success('已发起；切换到「待办办理」选择该用户即可看到任务')
@@ -1037,7 +1096,9 @@ function buildPanelConfigs(spec: any) {
       signType: config.signType || 'SINGLE',
       // AI 可能把数值写成 null/字符串，统一转成数字再交给面板与部署接口
       signRatio: Number(config.signRatio) || 100,
-      formCode: config.formCode || '',
+      // AI 草稿给的是 formCodes 数组 + 二维权限；NodeConfigPanel 载入时还会再兜底归一
+      formCodes: Array.isArray(config.formCodes) ? [...config.formCodes]
+        : (config.formCode ? [config.formCode] : []),
       fieldPolicy: config.fieldPolicy || {},
       decisionConfig: config.decisionConfig || {},
       triggerConfig: config.triggerConfig || {},
@@ -1048,9 +1109,11 @@ function buildPanelConfigs(spec: any) {
   const edges = Array.isArray(spec.edges) ? spec.edges : []
   edges.forEach((edge: any, index: number) => {
     // 能拆成单字段就用结构化面板；组合条件/自由表达式原样保留，不能丢
-    const conditionConfig = parseCondition(edge.condition)
-      || (edge.condition ? { expression: String(edge.condition).trim() } : null)
-    if (!conditionConfig) return
+    const conditionConfig: any = parseCondition(edge.condition)
+      || (edge.condition ? { expression: String(edge.condition).trim() } : {})
+    // 驳回路由可以无条件命中，所以即使没写 condition 也要把标记带进节点配置
+    if (edge.rejectRoute) conditionConfig.rejectRoute = true
+    if (!Object.keys(conditionConfig).length) return
     result.push({
       nodeId: edge.id || `flow_${index + 1}`,
       nodeName: edge.name || '',
@@ -1097,6 +1160,10 @@ onBeforeUnmount(() => {
 }
 .short-id { cursor: help; border-bottom: 1px dashed #C9D3CE; }
 .num-warn { color: #B3261E; font-weight: 600; }
+.admin-form-wrap { width: 100%; border: 1px solid var(--bp-line); border-radius: 12px; padding: 6px 16px; background: #FBFCFB; }
+.admin-form-section { padding: 8px 0 12px; border-bottom: 1px dashed var(--bp-line); }
+.admin-form-section:last-child { border-bottom: none; }
+.admin-form-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; margin-bottom: 8px; }
 .wf-strategy { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; }
 .wf-strategy :deep(.el-radio) { height: auto; align-items: flex-start; white-space: normal; margin-right: 0; }
 .wf-strategy :deep(.el-radio__label) { white-space: normal; line-height: 1.6; }

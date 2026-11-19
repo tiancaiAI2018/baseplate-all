@@ -20,12 +20,19 @@ import com.example.baseplate.api.model.WorkflowNodeConfig;
 import com.example.baseplate.api.model.WorkflowTaskDetail;
 import com.example.baseplate.workflow.adapter.out.persistence.WorkflowConfigRepository;
 import com.example.baseplate.workflow.application.AssigneeResolver;
+import com.example.baseplate.workflow.application.FieldPolicyService;
+import com.example.baseplate.workflow.application.RejectRouteSupport;
+import com.example.baseplate.workflow.application.WorkflowConditionValidator;
 import com.example.baseplate.api.model.WorkflowTaskTrace;
 import com.example.baseplate.api.port.out.CurrentUserProvider;
 import com.example.baseplate.api.port.out.ProcessEnginePort;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
 import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.el.VariableContainerWrapper;
 import org.flowable.common.engine.impl.identity.Authentication;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.RepositoryService;
@@ -33,6 +40,7 @@ import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.runtime.ProcessInstance;
@@ -40,6 +48,8 @@ import org.flowable.task.api.Task;
 import org.flowable.task.api.TaskQuery;
 import org.flowable.task.api.history.HistoricTaskInstance;
 import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.InputStream;
@@ -67,6 +77,8 @@ import java.util.stream.Collectors;
  * - 监控与详情一律走 HistoryService，运行表只用来算「当前停在哪」。
  */
 public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
+
+    private static final Logger log = LoggerFactory.getLogger(FlowableProcessEngineAdapter.class);
 
     private static final Pattern PROCESS_ID = Pattern.compile(
             "<([a-z0-9_]+:)?process\\b[^>]*\\bid=\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
@@ -144,13 +156,18 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
         // 待办查询按 userId，不能用 username：否则驳回后「发起人重做」会派给一个查不到的人
         vars.putIfAbsent("initiator", currentUserId());
         vars.putIfAbsent("tenantId", tenant);
-        // 表单字段要展开成顶层变量，网关条件（如 ${days > 3}）才能引用
+        // 多表单字段打平到流程变量：formCode__field + 原字段名，供网关条件/FORM_FIELD 引用。
+        // __formDataByCode 是 Controller → engine 的内部传递 key，打平后移除，不污染流程变量。
+        @SuppressWarnings("unchecked")
+        Map<String, Map<String, Object>> byForm =
+                vars.get("__formDataByCode") instanceof Map<?, ?> m
+                        ? (Map<String, Map<String, Object>>) m : Map.of();
+        vars.remove("__formDataByCode");
+        flattenFormVariables(vars, byForm);
+        // 兼容单表单入口：若 Controller 仍传 formData，也打平（存量调用方）
         if (vars.get("formData") instanceof Map<?, ?> formMap) {
-            for (Map.Entry<?, ?> entry : formMap.entrySet()) {
-                if (entry.getKey() != null && entry.getValue() != null) {
-                    vars.put(String.valueOf(entry.getKey()), entry.getValue());
-                }
-            }
+            flattenFormVariables(vars, Map.of("__START__", (Map<String, Object>) formMap));
+            vars.remove("formData");
         }
         // 预计算全部节点的办理人变量：单签引用 wf_assignee_*，会签引用 wf_assignees_*
         if (assigneeResolver != null && configRepository != null) {
@@ -164,6 +181,13 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
         try {
             instance = engine.getRuntimeService()
                     .startProcessInstanceByKeyAndTenantId(processKey, businessKey, vars, tenant);
+        } catch (RuntimeException ex) {
+            // 发起后立刻经过网关时同样可能缺变量；翻译成 400 而不是「服务内部错误」
+            String message = WorkflowConditionValidator.expressionFailureMessage(null, ex);
+            if (message != null) {
+                throw new IllegalArgumentException(message, ex);
+            }
+            throw ex;
         } finally {
             Authentication.setAuthenticatedUserId(null);
         }
@@ -296,32 +320,9 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
             config = configRepository.nodeConfig(tenant, definition.getKey(),
                     definition.getVersion(), activityId).orElse(null);
         }
-        // 表单数据按写入顺序合并：发起数据打底，后续节点覆盖同名字段
-        Map<String, Object> formData = new LinkedHashMap<>();
-        String formCode = config == null ? null : config.formCode();
-        if (configRepository != null) {
-            for (Map<String, Object> row : configRepository.formData(tenant, processInstanceId)) {
-                if (row.get("data") instanceof Map<?, ?> data) {
-                    for (Map.Entry<?, ?> entry : data.entrySet()) {
-                        if (entry.getKey() != null) {
-                            formData.put(String.valueOf(entry.getKey()), entry.getValue());
-                        }
-                    }
-                }
-                if ((formCode == null || formCode.isBlank()) && row.get("formCode") != null) {
-                    formCode = String.valueOf(row.get("formCode"));
-                }
-            }
-        }
-        String formSchema = null;
-        String formUiSchema = null;
-        if (formCode != null && !formCode.isBlank() && configRepository != null) {
-            Map<String, Object> schema = configRepository.formSchema(tenant, formCode);
-            if (schema != null) {
-                formSchema = text(schema.get("schema_json"));
-                formUiSchema = text(schema.get("ui_schema_json"));
-            }
-        }
+        // 节点实际表单 = 流程基础表单 ∪ 节点新增表单；每份表单按 formCode 分桶取已填数据
+        List<String> formCodes = effectiveFormCodes(tenant, definition, config);
+        Map<String, Map<String, Object>> dataByForm = formDataByCode(tenant, processInstanceId);
         CurrentUser user = currentUserOrNull();
         boolean canHandle = runtime != null && user != null
                 && (isAdmin(user) || user.userId().equals(runtime.getAssignee())
@@ -344,8 +345,24 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
                 instance == null ? null : instance.getStartUserId(),
                 instance == null ? null : startUserNames(Map.of(processInstanceId, instance)).get(instance.getStartUserId()),
                 instance == null ? null : instant(instance.getStartTime()), createdAt);
-        return new WorkflowTaskDetail(view, config, formCode, formSchema, formUiSchema,
-                formData, canHandle, ended, rollbackTargets);
+        // 每份表单单独裁剪：HIDDEN 字段连值都不下发，READONLY 值下发由前端置灰。
+        Map<String, Map<String, Object>> policyByForm = config == null ? Map.of() : config.fieldPolicy();
+        List<WorkflowTaskDetail.FormView> formViews = new ArrayList<>();
+        for (String formCode : formCodes) {
+            Map<String, Object> schema = configRepository == null ? null
+                    : configRepository.formSchema(tenant, formCode);
+            if (schema == null) {
+                continue; // 表单被删/未发布：跳过，不让办理页崩
+            }
+            Map<String, Object> rawData = dataByForm.getOrDefault(formCode, Map.of());
+            Map<String, Object> viewData = FieldPolicyService.viewForRead(
+                    rawData, FieldPolicyService.policyForForm(policyByForm, formCode));
+            boolean isBase = effectiveBaseCodes(tenant, definition).contains(formCode);
+            formViews.add(new WorkflowTaskDetail.FormView(formCode, text(schema.get("name")),
+                    text(schema.get("schema_json")), text(schema.get("ui_schema_json")),
+                    viewData, isBase));
+        }
+        return new WorkflowTaskDetail(view, config, formViews, canHandle, ended, rollbackTargets);
     }
 
     /** 批量装配任务视图：一次 IN 查询拿实例信息，一次拿发起人显示名，不逐条跨库。 */
@@ -391,6 +408,72 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
                 .map(HistoricProcessInstance::getStartUserId).toList());
     }
 
+    /**
+     * 实例的表单基底：按 formCode 分桶，各桶内按写入顺序合并（发起打底、后续覆盖）。
+     * 多表单下不同表单的同名字段各自独立，不再相互覆盖。回显与写入裁剪共用这份基底。
+     */
+    private Map<String, Map<String, Object>> formDataByCode(String tenant, String processInstanceId) {
+        Map<String, Map<String, Object>> byCode = new LinkedHashMap<>();
+        if (configRepository == null) {
+            return byCode;
+        }
+        for (Map<String, Object> row : configRepository.formData(tenant, processInstanceId)) {
+            Object code = row.get("formCode");
+            if (code == null || !(row.get("data") instanceof Map<?, ?> data)) {
+                continue;
+            }
+            Map<String, Object> bucket = byCode.computeIfAbsent(
+                    String.valueOf(code), k -> new LinkedHashMap<>());
+            for (Map.Entry<?, ?> entry : data.entrySet()) {
+                if (entry.getKey() != null) {
+                    bucket.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+            }
+        }
+        return byCode;
+    }
+
+    /** 流程级基础表单编码（安全返回空表）。 */
+    private List<String> effectiveBaseCodes(String tenant, ProcessDefinition definition) {
+        if (definition == null || configRepository == null) {
+            return List.of();
+        }
+        var setting = configRepository.setting(tenant, definition.getKey()).orElse(null);
+        return setting == null ? List.of() : setting.baseFormCodes();
+    }
+
+    /** 节点实际表单 = 基础表单 ∪ 节点新增，去重、保持顺序（基础在前）。 */
+    private List<String> effectiveFormCodes(String tenant, ProcessDefinition definition,
+                                            WorkflowNodeConfig config) {
+        List<String> result = new ArrayList<>(effectiveBaseCodes(tenant, definition));
+        if (config != null) {
+            for (String code : config.formCodes()) {
+                if (!result.contains(code)) {
+                    result.add(code);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 把各表单字段打平到流程变量：同时写「formCode__field」命名空间变量（多表单不冲突）
+     * 和原字段名（兼容存量条件表达式 / FORM_FIELD）。网关条件推荐用 formCode__field。
+     */
+    private void flattenFormVariables(Map<String, Object> variables,
+                                      Map<String, Map<String, Object>> dataByForm) {
+        for (Map.Entry<String, Map<String, Object>> form : dataByForm.entrySet()) {
+            String code = form.getKey();
+            for (Map.Entry<String, Object> field : form.getValue().entrySet()) {
+                if (field.getKey() == null || field.getValue() == null) {
+                    continue;
+                }
+                variables.putIfAbsent(code + "__" + field.getKey(), field.getValue());
+                variables.putIfAbsent(field.getKey(), field.getValue());
+            }
+        }
+    }
+
     @Override
     public void complete(String taskId, Decision decision, FormData data) {
         Task task = requireOwnedTask(taskId);
@@ -398,6 +481,12 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
         if (data != null && data.values() != null) {
             variables.putAll(data.values());
         }
+        // 多表单提交：先把各表单字段打平成流程变量，找人(FORM_FIELD)与网关条件才能用最新值
+        @SuppressWarnings("unchecked")
+        Map<String, Map<String, Object>> submittedByForm =
+                variables.get("formDataByCode") instanceof Map<?, ?> m
+                        ? (Map<String, Map<String, Object>>) m : Map.of();
+        flattenFormVariables(variables, submittedByForm);
         String resolved = decision == null ? Decision.APPROVE.name() : decision.name();
         variables.put("decision", resolved);
         variables.put("lastOperator", currentUserId());
@@ -423,31 +512,61 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
                     definition.getVersion(), task.getTaskDefinitionKey());
             if (config.isPresent()) {
                 validateDecision(config.get(), resolved, reason);
-                Object formData = variables.get("formData");
                 // 驳回不保存审批表单：表单数据属于通过后的业务结果，驳回意见已记在操作日志
-                if (!rejected && config.get().formCode() != null && !config.get().formCode().isBlank()
-                        && formData instanceof Map<?, ?>) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> values = (Map<String, Object>) formData;
-                    configRepository.saveFormData(tenant, task.getProcessInstanceId(),
-                            task.getTaskDefinitionKey(), config.get().formCode(), values, operator());
+                if (!rejected && !submittedByForm.isEmpty()) {
+                    WorkflowNodeConfig cfg = config.get();
+                    List<String> formCodes = effectiveFormCodes(tenant, definition, cfg);
+                    Map<String, Map<String, Object>> baseByForm = formDataByCode(tenant, task.getProcessInstanceId());
+                    Map<String, Map<String, Object>> policyByForm = cfg.fieldPolicy();
+                    for (String formCode : formCodes) {
+                        Map<String, Object> submitted = submittedByForm.get(formCode);
+                        if (submitted == null) {
+                            continue;
+                        }
+                        // 服务端字段权限：以该表单的库里基底为准，只采纳 EDITABLE 字段提交值。
+                        // READONLY/HIDDEN 即使被伪造提交也保留基底原值——真正的防线。
+                        Map<String, Object> base = baseByForm.getOrDefault(formCode, Map.of());
+                        Map<String, Object> schema = configRepository.formSchema(tenant, formCode);
+                        var schemaFields = schema == null ? java.util.List.<String>of()
+                                : FieldPolicyService.schemaFieldNames(text(schema.get("schema_json")));
+                        Map<String, Object> values = FieldPolicyService.mergeForWrite(
+                                base, submitted, FieldPolicyService.policyForForm(policyByForm, formCode), schemaFields);
+                        configRepository.saveFormData(tenant, task.getProcessInstanceId(),
+                                task.getTaskDefinitionKey(), formCode, values, operator());
+                    }
                 }
             }
         }
         if (rejected) {
             // 驳回必须真正退回：之前只把 decision 塞进变量，没有分支消费它，
             // 任务会沿默认出线继续走到结束，表现就是「点了驳回却审批通过」。
-            reject(task, resolved, reason);
+            reject(task, resolved, reason, variables);
             return;
         }
-        engine.getTaskService().complete(taskId, variables);
+        try {
+            engine.getTaskService().complete(taskId, variables);
+        } catch (RuntimeException ex) {
+            // 缺变量导致 500 是最难自查的一类：把节点和变量名直接告诉办理人
+            String message = WorkflowConditionValidator.expressionFailureMessage(
+                    task.getTaskDefinitionKey(), ex);
+            if (message != null) {
+                throw new IllegalArgumentException(message, ex);
+            }
+            throw ex;
+        }
         record(resolved, task.getProcessInstanceId(), task.getProcessDefinitionId(), taskId,
                 task.getTaskDefinitionKey(), resolved, reason, null);
     }
 
-    /** 驳回：退回到上一个已完成的用户任务；没有可退节点时结束实例。 */
-    private void reject(Task task, String decision, String reason) {
-        String target = previousUserTaskKey(task);
+    /**
+     * 驳回：优先按设计图上标记为「驳回路由」的连线选目标（连线条件 + 本次提交/流程变量），
+     * 没有标记线或条件都没命中时，兜底退回上一个已完成的用户任务。
+     */
+    private void reject(Task task, String decision, String reason, Map<String, Object> submittedVariables) {
+        String target = resolveRejectTarget(task, submittedVariables);
+        if (target == null) {
+            target = previousUserTaskKey(task);
+        }
         if (target == null) {
             engine.getRuntimeService().deleteProcessInstance(task.getProcessInstanceId(),
                     "驳回：" + (reason == null ? "" : reason));
@@ -462,6 +581,57 @@ public final class FlowableProcessEngineAdapter implements ProcessEnginePort {
         // 动作记为 ROLLBACK，轨迹页据此展示「打回」并统计次数
         record("ROLLBACK", task.getProcessInstanceId(), task.getProcessDefinitionId(),
                 task.getId(), task.getTaskDefinitionKey(), decision, reason, target);
+    }
+
+    /**
+     * 解析设计图上的驳回路由：只认编译期写进 conditionExpression 的守卫标记，
+     * 并用同一套 Flowable ExpressionManager 求值其中的原始条件（与正向网关口径一致）。
+     * 返回 null 表示没有可用路由，由调用方兜底上一节点。
+     */
+    private String resolveRejectTarget(Task task, Map<String, Object> submittedVariables) {
+        BpmnModel model = engine.getRepositoryService().getBpmnModel(task.getProcessDefinitionId());
+        if (model == null) {
+            return null;
+        }
+        FlowElement element = model.getFlowElement(task.getTaskDefinitionKey());
+        if (!(element instanceof FlowNode node) || node.getOutgoingFlows().isEmpty()) {
+            return null;
+        }
+        // Flowable 解析 BPMN 时会丢掉自定义的 flowable:rejectRoute/rejectCondition 属性，
+        // 但完整保留 conditionExpression 文本。因此运行期只认编译期写入的守卫标记，
+        // 再从守卫里还原原始条件；前端回读设计态用的扩展属性不能作为运行期依据。
+        List<RejectRouteSupport.Candidate> candidates = new ArrayList<>();
+        for (SequenceFlow flow : node.getOutgoingFlows()) {
+            String compiled = flow.getConditionExpression();
+            if (!RejectRouteSupport.isCompiledRejectRoute(compiled)) {
+                continue;
+            }
+            candidates.add(new RejectRouteSupport.Candidate(flow.getTargetRef(),
+                    RejectRouteSupport.originalCondition(compiled)));
+        }
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        ExpressionManager expressionManager = ((ProcessEngineConfigurationImpl)
+                engine.getProcessEngineConfiguration()).getExpressionManager();
+        Map<String, Object> variables = new HashMap<>();
+        try {
+            variables.putAll(engine.getRuntimeService().getVariables(task.getExecutionId()));
+        } catch (RuntimeException ignored) {
+            // 拿不到运行变量不应阻断驳回，用本次提交的变量继续
+        }
+        if (submittedVariables != null) {
+            variables.putAll(submittedVariables);
+        }
+        variables.put("decision", "REJECT");
+        return RejectRouteSupport.selectTarget(candidates,
+                (expression, vars) -> {
+                    Object value = expressionManager.createExpression(expression)
+                            .getValue(new VariableContainerWrapper(vars));
+                    return Boolean.TRUE.equals(value) || "true".equalsIgnoreCase(String.valueOf(value));
+                },
+                variables,
+                message -> log.warn("[驳回路由] {}", message));
     }
 
     /** 上一个已完成的用户任务；会签场景要排除当前节点自己的历史实例。 */

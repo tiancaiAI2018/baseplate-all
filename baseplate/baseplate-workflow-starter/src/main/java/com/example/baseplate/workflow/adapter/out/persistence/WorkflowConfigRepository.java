@@ -30,8 +30,8 @@ public final class WorkflowConfigRepository {
     private static final RowMapper<WorkflowNodeConfig> NODE_MAPPER = (rs, i) -> new WorkflowNodeConfig(
             rs.getString("node_id"), rs.getString("node_name"), rs.getString("node_type"),
             rs.getString("assignee_type"), rs.getString("assignee_value"),
-            rs.getString("sign_type"), rs.getInt("sign_ratio"), rs.getString("form_code"),
-            json(rs.getString("field_policy")), json(rs.getString("decision_config")),
+            rs.getString("sign_type"), rs.getInt("sign_ratio"), stringList(rs.getString("form_codes")),
+            stringMapMap(rs.getString("field_policy")), json(rs.getString("decision_config")),
             json(rs.getString("trigger_config")), json(rs.getString("condition_config")),
             rs.getInt("timeout_minutes"));
 
@@ -42,6 +42,52 @@ public final class WorkflowConfigRepository {
         }
         try {
             return new ObjectMapper().readValue(value, Map.class);
+        } catch (RuntimeException ex) {
+            return Map.of();
+        }
+    }
+
+    /** 解析 JSONB 字符串数组，如 ["a","b"]。 */
+    @SuppressWarnings("unchecked")
+    private static java.util.List<String> stringList(String value) {
+        if (value == null || value.isBlank()) {
+            return java.util.List.of();
+        }
+        try {
+            java.util.List<?> raw = new ObjectMapper().readValue(value, java.util.List.class);
+            java.util.List<String> result = new ArrayList<>();
+            for (Object item : raw) {
+                if (item != null) {
+                    result.add(String.valueOf(item));
+                }
+            }
+            return result;
+        } catch (RuntimeException ex) {
+            return java.util.List.of();
+        }
+    }
+
+    /** 解析二维字段权限 JSONB：{formCode: {field: policy}}。 */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Map<String, Object>> stringMapMap(String value) {
+        if (value == null || value.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> raw = new ObjectMapper().readValue(value, Map.class);
+            Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : raw.entrySet()) {
+                if (entry.getValue() instanceof Map<?, ?> inner) {
+                    Map<String, Object> copy = new LinkedHashMap<>();
+                    for (Map.Entry<?, ?> e : inner.entrySet()) {
+                        if (e.getKey() != null) {
+                            copy.put(String.valueOf(e.getKey()), e.getValue());
+                        }
+                    }
+                    result.put(entry.getKey(), copy);
+                }
+            }
+            return result;
         } catch (RuntimeException ex) {
             return Map.of();
         }
@@ -61,12 +107,12 @@ public final class WorkflowConfigRepository {
         for (WorkflowNodeConfig config : configs) {
             jdbc.update("INSERT INTO wf_node_config(tenant_id, process_key, definition_version,"
                             + " node_id, node_name, node_type, assignee_type, assignee_value,"
-                            + " sign_type, sign_ratio, form_code, field_policy, decision_config,"
+                            + " sign_type, sign_ratio, form_codes, field_policy, decision_config,"
                             + " trigger_config, condition_config, timeout_minutes, sort_no)"
-                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)",
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)",
                     tenant, processKey, version, config.nodeId(), config.nodeName(), config.nodeType(),
                     config.assigneeType(), config.assigneeValue(), config.signType(), config.signRatio(),
-                    config.formCode(), write(config.fieldPolicy()), write(config.decisionConfig()),
+                    writeList(config.formCodes()), write(config.fieldPolicy()), write(config.decisionConfig()),
                     write(config.triggerConfig()), write(config.conditionConfig()),
                     config.timeoutMinutes(), order++);
         }
@@ -152,12 +198,43 @@ public final class WorkflowConfigRepository {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    /**
+     * 单个表单的字段清单（name/title），供节点字段权限配置下拉用。
+     * 只解析 schema_json.fields，不触发 DDL，也不依赖 metadata starter。
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, String>> formFields(String tenant, String formCode) {
+        Map<String, Object> schema = formSchema(tenant, formCode);
+        List<Map<String, String>> result = new ArrayList<>();
+        if (schema == null || !(schema.get("schema_json") instanceof String text) || text.isBlank()) {
+            return result;
+        }
+        try {
+            Map<String, Object> parsed = mapper.readValue(text, Map.class);
+            if (!(parsed.get("fields") instanceof List<?> fields)) {
+                return result;
+            }
+            for (Object item : fields) {
+                if (item instanceof Map<?, ?> field && field.get("name") != null) {
+                    Map<String, String> one = new LinkedHashMap<>();
+                    one.put("name", String.valueOf(field.get("name")));
+                    one.put("title", field.get("title") == null
+                            ? String.valueOf(field.get("name")) : String.valueOf(field.get("title")));
+                    result.add(one);
+                }
+            }
+        } catch (RuntimeException ex) {
+            return List.of();
+        }
+        return result;
+    }
+
     // ---------- 流程发起配置 ----------
 
     private static final RowMapper<WorkflowProcessSetting> SETTING_MAPPER = (rs, i) -> new WorkflowProcessSetting(
             rs.getString("process_key"), rs.getString("category"), rs.getString("description"),
             rs.getString("icon"), rs.getString("start_scope_type"), rs.getString("start_scope_value"),
-            rs.getString("start_form_code"), rs.getBoolean("enabled"), rs.getInt("sort_order"));
+            stringList(rs.getString("base_form_codes")), rs.getBoolean("enabled"), rs.getInt("sort_order"));
 
     public Map<String, WorkflowProcessSetting> settings(String tenant) {
         Map<String, WorkflowProcessSetting> result = new LinkedHashMap<>();
@@ -175,18 +252,18 @@ public final class WorkflowConfigRepository {
 
     public void saveSetting(String tenant, WorkflowProcessSetting setting, String operator) {
         jdbc.update("INSERT INTO wf_process_setting(tenant_id, process_key, category, description,"
-                        + " icon, start_scope_type, start_scope_value, start_form_code, enabled,"
-                        + " sort_order, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        + " icon, start_scope_type, start_scope_value, base_form_codes, enabled,"
+                        + " sort_order, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)"
                         + " ON CONFLICT (tenant_id, process_key) DO UPDATE SET"
                         + " category = EXCLUDED.category, description = EXCLUDED.description,"
                         + " icon = EXCLUDED.icon, start_scope_type = EXCLUDED.start_scope_type,"
                         + " start_scope_value = EXCLUDED.start_scope_value,"
-                        + " start_form_code = EXCLUDED.start_form_code, enabled = EXCLUDED.enabled,"
+                        + " base_form_codes = EXCLUDED.base_form_codes, enabled = EXCLUDED.enabled,"
                         + " sort_order = EXCLUDED.sort_order, updated_by = EXCLUDED.updated_by,"
                         + " updated_at = now()",
                 tenant, setting.processKey(), setting.category(), setting.description(),
                 setting.icon(), setting.startScopeType(), setting.startScopeValue(),
-                setting.startFormCode(), setting.enabled(), setting.sortOrder(), operator);
+                writeList(setting.baseFormCodes()), setting.enabled(), setting.sortOrder(), operator);
     }
 
     public List<Map<String, Object>> roles(String tenant) {
@@ -271,11 +348,19 @@ public final class WorkflowConfigRepository {
                 + " WHERE u.tenant_id = ? AND u.status = 'ACTIVE' ORDER BY u.id", tenant);
     }
 
-    private String write(Map<String, Object> value) {
+    private String write(Object value) {
         try {
             return mapper.writeValueAsString(value == null ? Map.of() : value);
         } catch (RuntimeException ex) {
             return "{}";
+        }
+    }
+
+    private String writeList(List<String> value) {
+        try {
+            return mapper.writeValueAsString(value == null ? List.of() : value);
+        } catch (RuntimeException ex) {
+            return "[]";
         }
     }
 }

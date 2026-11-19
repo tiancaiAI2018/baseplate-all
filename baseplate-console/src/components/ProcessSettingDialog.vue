@@ -28,11 +28,15 @@
                     placeholder="一句话说明这个流程用来做什么、什么时候发起" />
         </el-form-item>
 
-        <el-form-item label="发起表单">
-          <el-select v-model="form.startFormCode" clearable filterable placeholder="默认取第一个节点表单" style="width: 100%">
+        <el-form-item label="基础表单">
+          <el-select v-model="form.baseFormCodes" multiple filterable collapse-tags collapse-tags-tooltip
+                     :max-collapse-tags="2" placeholder="所有节点自动继承，节点只能新增不能删除" style="width: 100%">
             <el-option v-for="item in options.forms" :key="item.code" :value="item.code"
                        :label="`${item.name}（${item.code} v${item.version}）`" />
           </el-select>
+          <p class="hint" style="margin: 6px 0 0">
+            可多选。这里配的表单会出现在每一个节点上且节点端无法删除；留空时默认取首个任务节点绑定的表单。
+          </p>
         </el-form-item>
 
         <el-form-item label="谁可以发起（发起侧数据权限）">
@@ -97,7 +101,7 @@ const options = ref<{ roles: any[]; orgs: any[]; forms: any[] }>({ roles: [], or
 const scopeValues = ref<string[]>([])
 const form = reactive({
   category: '通用', description: '', icon: '📄',
-  startScopeType: 'ALL', startFormCode: '', enabled: true, sortOrder: 0
+  startScopeType: 'ALL', baseFormCodes: [] as string[], enabled: true, sortOrder: 0
 })
 
 function onScopeTypeChange() { scopeValues.value = [] }
@@ -121,7 +125,7 @@ async function load() {
     form.description = existing?.description || ''
     form.icon = existing?.icon || '📄'
     form.startScopeType = existing?.startScopeType || 'ALL'
-    form.startFormCode = existing?.startFormCode || ''
+    form.baseFormCodes = Array.isArray(existing?.baseFormCodes) ? [...existing.baseFormCodes] : []
     form.enabled = existing ? !!existing.enabled : true
     form.sortOrder = existing?.sortOrder ?? 0
     scopeValues.value = existing?.startScopeValue
@@ -147,7 +151,7 @@ async function save() {
       icon: form.icon,
       startScopeType: form.startScopeType,
       startScopeValue: form.startScopeType === 'ALL' ? '' : scopeValues.value.join(','),
-      startFormCode: form.startFormCode || '',
+      baseFormCodes: [...form.baseFormCodes],
       enabled: form.enabled,
       sortOrder: form.sortOrder
     })

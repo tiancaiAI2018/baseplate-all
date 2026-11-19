@@ -44,11 +44,82 @@
           <span class="hint" style="margin-left: 8px">% 的成员同意即通过</span>
         </el-form-item>
         <el-form-item v-if="config.nodeType === 'userTask'" label="绑定表单">
-          <el-select v-model="config.formCode" clearable style="width: 100%">
-            <el-option v-for="form in options.forms || []" :key="form.code"
-                       :label="`${form.name || form.code}（v${form.version}）`" :value="form.code" />
-          </el-select>
+          <div class="form-bind">
+            <div v-for="item in effectiveForms" :key="item.code" class="form-bind-row">
+              <el-tag :type="item.base ? 'info' : 'success'" size="small" effect="plain">
+                {{ item.base ? '基础' : '新增' }}
+              </el-tag>
+              <span class="form-bind-name" :title="`${item.name}（${item.code}）`">
+                {{ item.name }}<span class="hint">（{{ item.code }}）</span>
+              </span>
+              <span v-if="item.base" class="hint">自动继承</span>
+              <el-button v-else link type="danger" size="small" @click="removeAddedForm(item.code)">移除</el-button>
+            </div>
+            <el-select v-model="formToAdd" filterable clearable placeholder="＋ 添加本节点专属表单"
+                       style="width: 100%" @change="addForm">
+              <el-option v-for="form in addableForms" :key="form.code" :value="form.code"
+                         :label="`${form.name || form.code}（v${form.version}）`" />
+            </el-select>
+            <p class="hint" style="margin: 4px 0 0">
+              基础表单来自流程发起配置，所有节点共享、节点端不可删除；这里只能追加本节点专属表单。
+            </p>
+          </div>
         </el-form-item>
+
+        <template v-if="config.nodeType === 'userTask' && effectiveForms.length">
+          <div class="sub-title">
+            字段权限
+            <el-tooltip content="按表单分别设置本节点每个字段是可编辑、只读还是隐藏。服务端会强制裁剪，前端置灰/隐藏只是体验。"
+                        placement="top">
+              <span class="hint" style="font-weight: 400">（?）</span>
+            </el-tooltip>
+          </div>
+          <el-radio-group v-model="activeFormCode" size="small" class="form-tabs">
+            <el-radio-button v-for="item in effectiveForms" :key="item.code" :value="item.code">
+              {{ item.name }}{{ item.base ? ' · 基础' : '' }}
+            </el-radio-button>
+          </el-radio-group>
+          <div class="batch-row">
+            <span class="hint">当前表单一键设置：</span>
+            <el-button size="small" @click="setAllPolicy('EDITABLE')">全可编辑</el-button>
+            <el-button size="small" @click="setAllPolicy('READONLY')">全只读</el-button>
+            <el-button size="small" @click="setAllPolicy('HIDDEN')">全隐藏</el-button>
+          </div>
+          <template v-if="fieldPolicyModel[activeFormCode]">
+            <div v-if="!formFields.length" class="hint field-empty">该表单没有字段，或尚未发布</div>
+            <div v-for="field in formFields" :key="field.name" class="field-policy-row">
+              <span class="field-label" :title="field.name">{{ field.title }}</span>
+              <el-select v-model="fieldPolicyModel[activeFormCode][field.name]" style="width: 132px"
+                         @change="syncFieldPolicy">
+                <el-option label="可编辑" value="EDITABLE" />
+                <el-option label="只读" value="READONLY" />
+                <el-option label="隐藏" value="HIDDEN" />
+              </el-select>
+            </div>
+          </template>
+          <div class="hint field-tip">未列出的字段默认为「可编辑」；设置后仅影响本节点。</div>
+        </template>
+
+        <template v-if="config.nodeType === 'userTask'">
+          <div class="sub-title">批量配置</div>
+          <div class="button-row">
+            <el-button size="small" :disabled="!prevNode" @click="copyFromPrevious">
+              复制「{{ prevNode ? (prevNode.name || prevNode.id) : '上一节点' }}」的表单与权限
+            </el-button>
+          </div>
+          <div class="button-row">
+            <el-select v-model="syncTargets" multiple filterable collapse-tags collapse-tags-tooltip
+                       placeholder="选择要同步到的其他节点" style="flex: 1; min-width: 0">
+              <el-option v-for="node in otherNodes" :key="node.id" :value="node.id"
+                         :label="node.name || node.id" />
+            </el-select>
+            <el-button size="small" type="primary" :disabled="!syncTargets.length" @click="syncToNodes">
+              同步
+            </el-button>
+          </div>
+          <div class="hint field-tip">复制/同步只覆盖「表单绑定 + 字段权限」，不动找人、签法和按钮。</div>
+        </template>
+
         <el-form-item v-if="config.nodeType === 'userTask'" label="触发动作">
           <el-select v-model="trigger" clearable style="width: 100%" @change="applyTrigger">
             <el-option v-for="item in options.triggers || []" :key="item.value"
@@ -78,6 +149,16 @@
 
         <template v-if="config.nodeType === 'sequenceFlow'">
           <div class="sub-title">出线条件</div>
+          <el-checkbox v-model="rejectRoute" style="margin-bottom: 8px">
+            作为驳回路由
+            <el-tooltip content="勾选后，这条线只在用户点驳回时按下面的条件选目标；正常审批不会走它。不写条件表示无条件命中。"
+                        placement="top">
+              <span class="hint" style="font-weight: 400">（?）</span>
+            </el-tooltip>
+          </el-checkbox>
+          <div v-if="rejectRoute" class="hint" style="margin-bottom: 8px">
+            驳回时才会求值这条线的条件，命中就退到线尾指向的节点；没有线路命中则退回上一个已完成任务。
+          </div>
           <el-radio-group v-model="conditionMode" size="small" style="margin-bottom: 6px">
             <el-radio-button value="STRUCTURED">简单条件</el-radio-button>
             <el-radio-button value="EXPRESSION">表达式</el-radio-button>
@@ -104,10 +185,11 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import http from '../api/client'
 
-const props = defineProps<{ modeler: any }>()
+const props = defineProps<{ modeler: any; processKey?: string }>()
 const nodes = ref<any[]>([])
 const options = ref<any>({})
 const currentId = ref('')
@@ -117,7 +199,161 @@ const trigger = ref('')
 const condition = reactive<any>({ field: '', operator: '>', value: '', valueType: 'NUMBER' })
 const conditionMode = ref<'STRUCTURED' | 'EXPRESSION'>('STRUCTURED')
 const conditionExpression = ref('')
+const rejectRoute = ref(false)
 const store = new Map<string, any>()
+
+// ---------- 多表单 + 二维字段权限 ----------
+// baseFormCodes 来自流程发起配置（wf_process_setting.base_form_codes），节点端只读。
+// config.formCodes 只存「节点新增」的表单；有效表单 = 基础 ∪ 新增，去重、基础在前。
+// fieldPolicyModel 是 el-select 的响应式视图：[formCode][field] = EDITABLE/READONLY/HIDDEN。
+// 写回 config.fieldPolicy 时只保留非 EDITABLE 项，保持配置简洁。
+const baseFormCodes = ref<string[]>([])
+const activeFormCode = ref('')
+const formToAdd = ref('')
+const syncTargets = ref<string[]>([])
+const fieldPolicyModel = reactive<Record<string, Record<string, string>>>({})
+
+function fieldsOf(code: string): any[] {
+  const form = (options.value.forms || []).find((f: any) => f.code === code)
+  return Array.isArray(form?.fields) ? form.fields : []
+}
+
+const effectiveForms = computed<any[]>(() => {
+  const codes: string[] = []
+  for (const code of [...baseFormCodes.value, ...(config.value?.formCodes || [])]) {
+    if (code && !codes.includes(code)) codes.push(code)
+  }
+  return codes.map((code) => ({
+    code,
+    name: (options.value.forms || []).find((f: any) => f.code === code)?.name || code,
+    base: baseFormCodes.value.includes(code)
+  }))
+})
+
+const addableForms = computed<any[]>(() => (options.value.forms || [])
+  .filter((f: any) => f.code && !effectiveForms.value.some((item) => item.code === f.code)))
+
+const formFields = computed<any[]>(() => fieldsOf(activeFormCode.value))
+
+function initFieldPolicy() {
+  for (const key of Object.keys(fieldPolicyModel)) delete fieldPolicyModel[key]
+  const policy = config.value?.fieldPolicy || {}
+  for (const form of effectiveForms.value) {
+    const inner = policy[form.code] || {}
+    const model: Record<string, string> = {}
+    for (const field of fieldsOf(form.code)) {
+      model[field.name] = String(inner[field.name] || 'EDITABLE')
+    }
+    fieldPolicyModel[form.code] = model
+  }
+  if (!effectiveForms.value.some((item) => item.code === activeFormCode.value)) {
+    activeFormCode.value = effectiveForms.value[0]?.code || ''
+  }
+}
+
+function syncFieldPolicy() {
+  if (!config.value) return
+  const result: Record<string, Record<string, string>> = {}
+  for (const [code, model] of Object.entries(fieldPolicyModel)) {
+    const inner: Record<string, string> = {}
+    for (const [field, value] of Object.entries(model)) {
+      if (value && value !== 'EDITABLE') inner[field] = value
+    }
+    if (Object.keys(inner).length) result[code] = inner
+  }
+  config.value.fieldPolicy = result
+}
+
+// options（含表单字段清单）异步到达 / 表单列表变化后，补齐视图，避免模板读到 undefined
+watch([effectiveForms, activeFormCode], () => {
+  for (const form of effectiveForms.value) {
+    if (!fieldPolicyModel[form.code]) fieldPolicyModel[form.code] = {}
+    for (const field of fieldsOf(form.code)) {
+      if (fieldPolicyModel[form.code][field.name] === undefined) {
+        fieldPolicyModel[form.code][field.name] = 'EDITABLE'
+      }
+    }
+  }
+}, { immediate: true })
+
+function setAllPolicy(value: string) {
+  const code = activeFormCode.value
+  if (!code || !fieldPolicyModel[code]) return
+  for (const field of formFields.value) fieldPolicyModel[code][field.name] = value
+  syncFieldPolicy()
+}
+
+function addForm(code: string) {
+  if (!code || !config.value) return
+  const codes = Array.isArray(config.value.formCodes) ? [...config.value.formCodes] : []
+  if (!codes.includes(code) && !baseFormCodes.value.includes(code)) codes.push(code)
+  config.value.formCodes = codes
+  formToAdd.value = ''
+  activeFormCode.value = code
+  initFieldPolicy()
+  syncFieldPolicy()
+}
+
+function removeAddedForm(code: string) {
+  if (!config.value) return
+  config.value.formCodes = (config.value.formCodes || []).filter((item: string) => item !== code)
+  if (activeFormCode.value === code) activeFormCode.value = ''
+  initFieldPolicy()
+  syncFieldPolicy()
+}
+
+async function loadBaseFormCodes() {
+  if (!props.processKey) return
+  try {
+    const { data } = await http.get('/api/workflow/process-settings')
+    const setting = (data || []).find((item: any) => item.processKey === props.processKey)
+    baseFormCodes.value = Array.isArray(setting?.baseFormCodes) ? [...setting.baseFormCodes] : []
+  } catch {
+    baseFormCodes.value = []
+  }
+  initFieldPolicy()
+}
+
+// ---------- 批量：复制上一个节点 / 同步到选中节点 ----------
+const prevNode = computed(() => {
+  const index = nodes.value.findIndex((node) => node.id === currentId.value)
+  return index > 0 ? nodes.value[index - 1] : null
+})
+const otherNodes = computed(() => nodes.value.filter((node) => node.id !== currentId.value))
+
+function copyFromPrevious() {
+  const prev = prevNode.value
+  if (!prev || !config.value) return
+  const source = store.get(prev.id)
+  if (!source) {
+    ElMessage.warning('上一个节点还没有可复制的配置')
+    return
+  }
+  config.value.formCodes = Array.isArray(source.formCodes) ? [...source.formCodes] : []
+  config.value.fieldPolicy = normalizePolicy(source)
+  initFieldPolicy()
+  persistCurrent()
+  ElMessage.success(`已复制「${prev.name || prev.id}」的表单与字段权限`)
+}
+
+function syncToNodes() {
+  if (!config.value || !syncTargets.value.length) return
+  persistCurrent()
+  const formCodes = [...(config.value.formCodes || [])]
+  const policy = JSON.parse(JSON.stringify(config.value.fieldPolicy || {}))
+  let count = 0
+  for (const id of syncTargets.value) {
+    const node = nodes.value.find((item) => item.id === id)
+    const target = store.get(id) || (node ? blank(node) : null)
+    if (!target) continue
+    target.formCodes = [...formCodes]
+    target.fieldPolicy = JSON.parse(JSON.stringify(policy))
+    store.set(id, target)
+    count += 1
+  }
+  syncTargets.value = []
+  ElMessage.success(`已同步到 ${count} 个节点（只改表单与字段权限）`)
+}
 
 function typeLabel(type: string) {
   return type === 'userTask' ? '任务' : type === 'sequenceFlow' ? '连线' : '节点'
@@ -139,9 +375,40 @@ function blank(node: any) {
     nodeId: node.id, nodeName: node.name || node.id, nodeType: node.type,
     assigneeType: node.type === 'userTask' ? 'INITIATOR' : 'INITIATOR',
     assigneeValue: '', signType: 'SINGLE', signRatio: 100,
-    formCode: '', fieldPolicy: {}, decisionConfig: {}, triggerConfig: {},
+    formCodes: [], fieldPolicy: {}, decisionConfig: {}, triggerConfig: {},
     conditionConfig: {}, timeoutMinutes: 0
   }
+}
+
+// AI 草稿 / 早期前端偶尔还会给单值 formCode 和一维 fieldPolicy。
+// 这里只做结构性归一：一维权限按该节点第一个表单装进二维结构，其余非法结构当空，不猜语义。
+function normalizePolicy(item: any, formCodes: string[] = []): Record<string, Record<string, string>> {
+  const raw = item?.fieldPolicy || {}
+  const keys = Object.keys(raw)
+  if (!keys.length) return {}
+  const flat = keys.every((key) => typeof raw[key] === 'string')
+  if (!flat) {
+    const result: Record<string, Record<string, string>> = {}
+    for (const [code, inner] of Object.entries(raw)) {
+      if (code && inner && typeof inner === 'object') {
+        result[code] = { ...(inner as Record<string, string>) }
+      }
+    }
+    return result
+  }
+  const code = formCodes[0] || (typeof item?.formCode === 'string' ? item.formCode : '')
+  return code ? { [code]: { ...raw } } : {}
+}
+
+function normalizeConfig(item: any) {
+  const copy = { ...item }
+  const codes = Array.isArray(copy.formCodes)
+    ? [...copy.formCodes]
+    : (copy.formCode ? [copy.formCode] : [])
+  copy.formCodes = codes.filter((code: any) => typeof code === 'string' && code.trim())
+  copy.fieldPolicy = normalizePolicy(copy, copy.formCodes)
+  delete copy.formCode
+  return copy
 }
 
 // bpmn-js 的元素类型带命名空间前缀且首字母大写（bpmn:UserTask / bpmn:SequenceFlow），
@@ -221,13 +488,17 @@ function revealOnCanvas(node: any) {
 function select(node: any) {
   persistCurrent()
   currentId.value = node.id
-  const item = store.get(node.id) || blank(node)
+  const item = normalizeConfig(store.get(node.id) || blank(node))
   config.value = { ...item }
+  formToAdd.value = ''
+  syncTargets.value = []
   buttons.value = Array.isArray(item.decisionConfig?.buttons)
     ? item.decisionConfig.buttons.map((b: any) => ({ ...b })) : []
+  initFieldPolicy()
   trigger.value = item.triggerConfig?.onEnter || ''
   // 自由表达式优先回填：组合条件无法拆成单个字段，必须原样保留
   conditionExpression.value = item.conditionConfig?.expression || ''
+  rejectRoute.value = item.conditionConfig?.rejectRoute === true
   conditionMode.value = conditionExpression.value ? 'EXPRESSION' : 'STRUCTURED'
   Object.assign(condition, { field: '', operator: '>', value: '', valueType: 'NUMBER' },
     item.conditionConfig || {})
@@ -249,13 +520,21 @@ watch(currentId, async () => {
 
 function persistCurrent() {
   if (!config.value || !currentId.value) return
+  syncFieldPolicy()
   config.value.decisionConfig = { buttons: buttons.value.filter((b) => b.code) }
   config.value.triggerConfig = trigger.value ? { onEnter: trigger.value } : {}
-  config.value.conditionConfig = conditionMode.value === 'EXPRESSION'
-    ? (conditionExpression.value.trim() ? { expression: conditionExpression.value.trim() } : {})
-    : (condition.field
-      ? { field: condition.field, operator: condition.operator, value: condition.value, valueType: condition.valueType }
-      : {})
+  let conditionConfig: any = {}
+  if (conditionMode.value === 'EXPRESSION') {
+    if (conditionExpression.value.trim()) conditionConfig = { expression: conditionExpression.value.trim() }
+  } else if (condition.field) {
+    conditionConfig = {
+      field: condition.field, operator: condition.operator,
+      value: condition.value, valueType: condition.valueType
+    }
+  }
+  // 驳回路由可以没有条件（=无条件命中），所以标记要独立于条件存在
+  if (rejectRoute.value) conditionConfig.rejectRoute = true
+  config.value.conditionConfig = conditionConfig
   // AI 草稿里的数值字段可能是 null；统一归一为数字，避免下游按原始类型解析时失败
   if (config.value.nodeType === 'userTask') {
     config.value.signRatio = Number(config.value.signRatio) || 100
@@ -271,13 +550,18 @@ function applyTrigger() { /* 保存时由 persistCurrent 统一写入 */ }
 
 function getConfigs() {
   persistCurrent()
-  return Array.from(store.values())
+  // 基础表单由流程配置统一继承，节点配置里不再重复带一份，避免两处真相不一致。
+  return Array.from(store.values()).map((item) => ({
+    ...item,
+    formCodes: (item.formCodes || []).filter((code: string) => code && !baseFormCodes.value.includes(code))
+  }))
 }
 
 function loadConfigs(list: any[]) {
   store.clear()
   for (const item of list || []) {
-    store.set(item.nodeId, { ...item })
+    const normalized = normalizeConfig(item)
+    store.set(normalized.nodeId, normalized)
   }
   if (currentId.value) {
     const node = nodes.value.find((n) => n.id === currentId.value)
@@ -285,17 +569,24 @@ function loadConfigs(list: any[]) {
   }
 }
 
-defineExpose({ refreshNodes, getConfigs, loadConfigs })
+defineExpose({ refreshNodes, getConfigs, loadConfigs, reloadBaseForms: loadBaseFormCodes })
 
 // 父组件的 modeler 是在 onMounted 里才 new 出来的，子组件挂载时还是空；
 // 只靠父组件主动调 refreshNodes 容易漏（tab 切换、重新导入 XML），这里同步兜一层
 watch(() => props.modeler, () => { refreshNodes(); bindCanvasSelection() }, { immediate: true })
+
+// 流程 Key 变更（设计器切流程 / 载入草稿）时基础表单也要跟着换
+watch(() => props.processKey, () => { loadBaseFormCodes() })
 
 onMounted(async () => {
   try {
     const { data } = await http.get('/api/workflow/node-configs/options')
     options.value = data
   } catch { options.value = {} }
+  await loadBaseFormCodes()
+  // options（含表单字段清单）异步到达后，重填一次字段权限视图，
+  // 否则用户先点节点再加载完选项时下拉会是空的
+  initFieldPolicy()
   refreshNodes()
 })
 </script>
@@ -320,4 +611,14 @@ onMounted(async () => {
 .node-form { flex: 1; overflow: auto; padding: 12px 10px; }
 .sub-title { font-size: 13px; font-weight: 600; margin: 12px 0 8px; color: #1C1B18; }
 .button-row { display: flex; gap: 4px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+.field-policy-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.field-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: #1C1B18; }
+.field-empty { padding: 4px 0; }
+.field-tip { display: block; margin-top: 2px; font-size: 11.5px; }
+.form-bind { width: 100%; }
+.form-bind-row { display: flex; align-items: center; gap: 6px; min-height: 24px; margin-bottom: 3px; }
+.form-bind-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.form-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; max-width: 100%; }
+.form-tabs :deep(.el-radio-button__inner) { padding: 5px 9px; font-size: 12px; }
+.batch-row { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 </style>

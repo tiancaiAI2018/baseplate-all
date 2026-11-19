@@ -219,10 +219,11 @@ try {
 |---|---|
 | `workflow_create_draft` | 调 drafts 接口 → 跳设计器 `?draftId=` |
 | `workflow_get_canvas` | 从画布注册表读 XML + spec → 返回结果并带 `ui.kind=workflow_preview` |
-| `workflow_complete_task` | 调 `/api/workflow/tasks/{id}/complete`，广播 `workflow:changed` |
-| `workflow_rollback_task` | 调 `/api/workflow/tasks/{id}/rollback`，广播 `workflow:changed` |
 | `form_create_draft` | 编译字段 → 保存草稿 → 跳表单设计器 `?code=` |
 | `form_get_canvas` | 读表单设计器当前字段 → 返回字段清单 |
+
+> 同意/驳回/打回**没有**外部工具：它们的实现只是把 `POST /tasks/{id}/complete`（或 `/rollback`）包一层，
+> 模型多绕一次没有收益，还会让「谁批的」变模糊。办理统一由用户在办理抽屉确认。
 
 执行结果通过 `/api/agent/external-calls/{callId}/result` 回传。**流进行中执行完的结果会先排队**，
 等本轮流结束再提交，避免和正在进行的 SSE 抢同一会话。
@@ -254,10 +255,33 @@ try {
 }
 ```
 
+个人流程（我发起的 / 办理进度 / 概览）：
+
+```json
+{ "ui": { "kind": "instance_list", "title": "我发起且未走完的（3 个）",
+          "items": [{ "instanceId": "...", "title": "COND-20261119-01",
+                      "subtitle": "条件校验验证 · 停在：主管审批 · 11-19 16:35" }] } }
+```
+
+```json
+{ "ui": { "kind": "instance_progress", "instanceId": "...",
+          "title": "条件校验验证 · COND-261119-01", "status": "运行中",
+          "currentNodes": ["主管审批"] } }
+```
+
+```json
+{ "ui": { "kind": "stat_group", "title": "我的流程概览",
+          "stats": [{ "label": "待办", "value": 4, "unit": "条", "hint": "等待我处理" }] } }
+```
+
 注意：
 
 - 卡片负载里的 `kind` 不能叫 `type`：SSE 帧本身有 `type` 字段，会覆盖事件类型
 - `ui` 由服务端单独推 `ui` 事件并写入历史块；外部工具结果里的 `ui` 会从模型上下文剔除
+- **工具返回值可能被 SDK 再序列化一层**（`"{\"total\":3,...}"`），服务端统一剥壳后再找 `ui`；
+  不剥壳的表现是「工具调用成功但卡片永远不出现」，日志里也没有异常
+- `instance_progress` 卡片自己调 `/instances/{id}/xml` + `/detail` 画图（绿=已走过、橙=当前、红=被打回），
+  点「查看详情」在助手面板内直接开 `InstanceDetailDrawer`，不跳页
 - 任务卡片「办理」跳 `/workflow/todo?taskId=xxx`，待办页会直接打开办理抽屉
 
 ---

@@ -112,6 +112,38 @@
                   <AgentBpmnCard v-else-if="block.type === 'ui' && block.kind === 'workflow_preview'"
                                  :xml="block.bpmnXml || ''" :title="block.title"
                                  :open-route="block.route" />
+                  <template v-else-if="block.type === 'ui' && block.kind === 'instance_list'">
+                    <div class="task-card">
+                      <div class="task-card-head">{{ block.title || '流程实例' }}</div>
+                      <div v-if="!block.items?.length" class="task-empty">没有符合条件的流程</div>
+                      <div v-for="row in block.items || []" :key="row.instanceId" class="task-row">
+                        <div class="task-main">
+                          <div class="task-name">{{ row.title || row.businessKey || row.processName || '未命名流程' }}</div>
+                          <div class="task-meta">{{ row.subtitle || row.processName }}</div>
+                        </div>
+                        <el-button v-if="row.instanceId" size="small" type="primary" plain
+                                   @click="openInstance(row.instanceId)">看进度</el-button>
+                      </div>
+                    </div>
+                  </template>
+                  <AgentInstanceProgress v-else-if="block.type === 'ui' && block.kind === 'instance_progress'"
+                                         :instance-id="block.instanceId" :title="block.title"
+                                         :status="block.status" :current-nodes="block.currentNodes"
+                                         @open="openInstance" />
+                  <template v-else-if="block.type === 'ui' && block.kind === 'stat_group'">
+                    <div class="stat-card">
+                      <div class="task-card-head">{{ block.title || '概览' }}</div>
+                      <div class="stat-grid">
+                        <div v-for="cell in block.stats || []" :key="cell.label" class="stat-cell">
+                          <div class="stat-value">
+                            {{ cell.value }}<span class="stat-unit">{{ cell.unit }}</span>
+                          </div>
+                          <div class="stat-label">{{ cell.label }}</div>
+                          <div class="stat-hint">{{ cell.hint }}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
                   <div v-else-if="block.type === 'ui'" class="ui-card">
                     <div class="ui-text">{{ block.label || 'AI 已准备好下一步' }}</div>
                     <el-button size="small" type="primary" @click="openUi(block)">打开</el-button>
@@ -150,6 +182,9 @@
                        :disabled="!draft.trim() || agent.streaming" @click="send">发送</el-button>
           </div>
         </footer>
+
+        <!-- 进度卡片的「查看详情」在助手面板内直接开抽屉，不打断当前页面 -->
+        <InstanceDetailDrawer v-model="detailOpen" :instance-id="activeInstanceId" />
       </section>
     </transition>
 
@@ -170,6 +205,8 @@ import { readAgentCanvas } from '../../api/agentCanvas'
 import http from '../../api/client'
 import AgentMarkdown from './AgentMarkdown.vue'
 import AgentBpmnCard from './AgentBpmnCard.vue'
+import AgentInstanceProgress from './AgentInstanceProgress.vue'
+import InstanceDetailDrawer from '../InstanceDetailDrawer.vue'
 import { buildFormArtifacts, FIELD_NAME_PATTERN, normalizeAiFields } from './formRuleBuilder'
 
 const route = useRoute()
@@ -324,80 +361,28 @@ registerAgentExternalTool('form_get_canvas', async () => {
   }
 })
 
-/** 办理类外部工具执行后通知页面刷新待办；页面按需监听 workflow:changed。 */
-function notifyWorkflowChanged() {
-  window.dispatchEvent(new Event('workflow:changed'))
-}
-
 /**
- * 外部工具：同意 / 驳回。
- * 走用户自己的 HTTP 接口，权限、审计和任务归属校验全部复用后端，
- * 不因为在对话里执行而绕过。
+ * 办理类操作不注册成外部工具。
+ *
+ * <p>同意/驳回/打回在这里的实现只是把 HTTP 接口包一层，模型多绕一次没有收益，
+ * 反而让「谁批的」变模糊。办理统一由用户点列表卡片或待办页的「办理」按钮完成。</p>
  */
-registerAgentExternalTool('workflow_complete_task', async (args) => {
-  const taskId = String(args.taskId || '').trim()
-  const decision = String(args.decision || 'APPROVE').toUpperCase()
-  const comment = String(args.comment || '').trim()
-  if (!taskId) {
-    return { ok: false, error: '缺少 taskId，请先查询待办任务' }
-  }
-  if (decision !== 'APPROVE' && decision !== 'REJECT') {
-    return { ok: false, error: 'decision 只能是 APPROVE 或 REJECT' }
-  }
-  if (decision === 'REJECT' && !comment) {
-    return { ok: false, error: '驳回必须填写原因' }
-  }
-  const values: Record<string, any> = { ...(args.values || {}) }
-  if (comment) {
-    values.reason = comment
-    values.comment = comment
-  }
-  try {
-    await http.post(`/api/workflow/tasks/${encodeURIComponent(taskId)}/complete`, { decision, values })
-    notifyWorkflowChanged()
-    return {
-      ok: true,
-      result: {
-        taskId,
-        decision,
-        message: decision === 'REJECT'
-          ? '已驳回，流程已退回上一个审批节点'
-          : '已同意，流程已流转到下一节点'
-      }
-    }
-  } catch (error: any) {
-    return { ok: false, error: pickErrorDetail(error, '办理任务失败') }
-  }
-})
-
-/** 外部工具：把任务打回到指定历史节点。 */
-registerAgentExternalTool('workflow_rollback_task', async (args) => {
-  const taskId = String(args.taskId || '').trim()
-  const targetNodeId = String(args.targetNodeId || '').trim()
-  const reason = String(args.reason || '').trim()
-  if (!taskId || !targetNodeId) {
-    return { ok: false, error: '缺少 taskId 或 targetNodeId' }
-  }
-  if (!reason) {
-    return { ok: false, error: '打回必须填写原因' }
-  }
-  try {
-    await http.post(`/api/workflow/tasks/${encodeURIComponent(taskId)}/rollback`,
-      { targetNodeId, reason })
-    notifyWorkflowChanged()
-    return {
-      ok: true,
-      result: { taskId, targetNodeId, message: '已打回到指定节点' }
-    }
-  } catch (error: any) {
-    return { ok: false, error: pickErrorDetail(error, '打回任务失败') }
-  }
-})
 
 const agent = useAgentStore()
 const draft = ref('')
 const showHistory = ref(false)
 const listRef = ref<HTMLElement | null>(null)
+
+// 实例详情抽屉：进度卡片的「查看详情」和实例列表的「看进度」共用同一个入口，
+// 抽屉里就是 InstanceProgress（进度图 + 轨迹 + 表单 + 操作流水），不新增路由
+const detailOpen = ref(false)
+const activeInstanceId = ref('')
+
+function openInstance(instanceId: string) {
+  if (!instanceId) return
+  activeInstanceId.value = instanceId
+  detailOpen.value = true
+}
 
 function currentPageKey() {
   return route.path.replace(/^\//, '') || 'dashboard'
@@ -784,6 +769,45 @@ function externalStatusText(status?: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 概览数字：四个格子，窄面板下自动折成两行 */
+.stat-card {
+  border: 1px solid var(--bp-line);
+  background: #F7FAF8;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.stat-cell {
+  background: #FFFFFF;
+  border: 1px solid var(--bp-line);
+  border-radius: 6px;
+  padding: 7px 8px;
+}
+.stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--bp-ink);
+}
+.stat-unit {
+  font-size: 11px;
+  font-weight: 400;
+  margin-left: 2px;
+  color: var(--bp-muted);
+}
+.stat-label {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--bp-ink);
+}
+.stat-hint {
+  font-size: 10.5px;
+  color: var(--bp-muted);
 }
 .external-card {
   border-color: #C9DCEA;

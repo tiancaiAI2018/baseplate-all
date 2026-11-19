@@ -6,6 +6,61 @@
  */
 import dagre from '@dagrejs/dagre'
 
+const FLOWABLE_NS = 'http://flowable.org/bpmn'
+
+/**
+ * 设计器载入「已部署流程」时，把服务端编译注入的受控监听器剥离掉，
+ * 还原成可再次编辑、再次部署的设计态 XML。
+ *
+ * 背景：deploy 时 NodeConfigCompiler 会往 userTask 注入
+ * <flowable:taskListener delegateExpression="${wfAssigneeResolver}" event="create"/>
+ * 让「上一节点办理人 / 表单字段指定」这类找人逻辑生效。而设计器打开已有流程走的是
+ * /definitions/{id}/xml，拿到的是 Flowable 里编译后的资源；直接回填画布再点部署，
+ * 这段监听器会被当成「用户上传的原始 XML」撞上 BpmnXmlValidator 的 taskListener 黑名单。
+ *
+ * 同时还原驳回路由的编译守卫：服务端会把 rejectRoute 线的条件写成
+ * ${decision == 'REJECT' && (原始条件)}，并把原始条件留在 flowable:rejectCondition。
+ * 设计态必须显示原始条件，否则再次部署会被二次包装成嵌套守卫。
+ *
+ * 只处理这两类确定的服务端产物；其它属性（assignee/formKey/普通 conditionExpression
+ * 等由编译器 remove-then-set）留在 XML 里不会重复累积。解析失败时返回原文，
+ * 交给下游 importXML 报错，不在清洗环节吞异常。
+ */
+export function stripCompiledListeners(xml: string): string {
+  if (!xml) return xml
+  try {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml')
+    if (doc.getElementsByTagName('parsererror').length) {
+      return xml
+    }
+    let changed = false
+
+    const listeners = Array.from(doc.getElementsByTagNameNS(FLOWABLE_NS, 'taskListener'))
+    const compiled = listeners.filter((el) =>
+      '${wfAssigneeResolver}' === (el.getAttribute('delegateExpression') || '').trim())
+    for (const el of compiled) {
+      el.parentNode?.removeChild(el)
+      changed = true
+    }
+
+    const flows = Array.from(doc.getElementsByTagNameNS(BPMN_NS, 'sequenceFlow'))
+    for (const flow of flows) {
+      const marked = flow.getAttributeNS(FLOWABLE_NS, 'rejectRoute')
+      const original = flow.getAttributeNS(FLOWABLE_NS, 'rejectCondition')
+      if (marked !== 'true' || !original) continue
+      const condition = flow.getElementsByTagNameNS(BPMN_NS, 'conditionExpression')[0]
+      if (condition && condition.textContent !== original) {
+        condition.textContent = original
+        changed = true
+      }
+    }
+
+    return changed ? new XMLSerializer().serializeToString(doc) : xml
+  } catch {
+    return xml
+  }
+}
+
 const BPMN_NS = 'http://www.omg.org/spec/BPMN/20100524/MODEL'
 const BPMNDI_NS = 'http://www.omg.org/spec/BPMN/20100524/DI'
 const DC_NS = 'http://www.omg.org/spec/DD/20100524/DC'

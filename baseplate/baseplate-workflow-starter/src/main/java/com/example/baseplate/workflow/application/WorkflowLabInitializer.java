@@ -184,12 +184,14 @@ public final class WorkflowLabInitializer {
     private void ensureSetting(String tenant, String processKey, String category, String icon,
                                String description, String scopeType, String scopeValue,
                                String formCode, int sortOrder) {
+        // 多表单：列已改为 base_form_codes(JSONB 数组)，演示流程把表单设为流程级基础表单，
+        // 这样所有节点自动继承，演练链路才会跟真实配置口径一致。
         jdbc.update("INSERT INTO wf_process_setting(tenant_id, process_key, category, description,"
-                        + " icon, start_scope_type, start_scope_value, start_form_code, enabled,"
-                        + " sort_order, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, 'lab-init')"
+                        + " icon, start_scope_type, start_scope_value, base_form_codes, enabled,"
+                        + " sort_order, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, TRUE, ?, 'lab-init')"
                         + " ON CONFLICT (tenant_id, process_key) DO NOTHING",
                 tenant, processKey, category, description, icon, scopeType, scopeValue,
-                formCode, sortOrder);
+                "[\"" + formCode + "\"]", sortOrder);
     }
 
     private void ensureExpenseForm(String tenant) {
@@ -224,19 +226,19 @@ public final class WorkflowLabInitializer {
                 Map.of("code", "REJECT", "label", "驳回", "reasonRequired", true, "reasonMinLength", 5)));
         return List.of(
                 new WorkflowNodeConfig("Task_Lead", "部门主管审批", "userTask",
-                        "DEPT_MANAGER", "DEPT_MANAGER", "SINGLE", 100, EXPENSE_FORM_CODE,
+                        "DEPT_MANAGER", "DEPT_MANAGER", "SINGLE", 100, List.of(EXPENSE_FORM_CODE),
                         Map.of(), leadButtons, Map.of(), Map.of(), 0),
                 new WorkflowNodeConfig("Task_FinanceReview", "财务复核", "userTask",
-                        "ROLE", "FINANCE", "SINGLE", 100, EXPENSE_FORM_CODE,
-                        Map.of("amount", "READONLY"), Map.of("buttons", List.of(
+                        "ROLE", "FINANCE", "SINGLE", 100, List.of(EXPENSE_FORM_CODE),
+                        Map.of(EXPENSE_FORM_CODE, Map.of("amount", "READONLY")), Map.of("buttons", List.of(
                                 Map.of("code", "APPROVE", "label", "同意", "reasonRequired", false),
                                 Map.of("code", "REJECT", "label", "驳回", "reasonRequired", true, "reasonMinLength", 5))),
                         Map.of(), Map.of(), 0),
                 new WorkflowNodeConfig("Flow_To_Review", "超过 5000 元财务复核", "sequenceFlow",
-                        "INITIATOR", "", "SINGLE", 100, null, Map.of(), Map.of(), Map.of(),
+                        "INITIATOR", "", "SINGLE", 100, List.of(), Map.of(), Map.of(), Map.of(),
                         Map.of("field", "amount", "operator", ">", "valueType", "NUMBER", "value", 5000), 0),
                 new WorkflowNodeConfig("Flow_To_End", "5000 元内直接结束", "sequenceFlow",
-                        "INITIATOR", "", "SINGLE", 100, null, Map.of(), Map.of(), Map.of(),
+                        "INITIATOR", "", "SINGLE", 100, List.of(), Map.of(), Map.of(), Map.of(),
                         Map.of("field", "amount", "operator", "<=", "valueType", "NUMBER", "value", 5000), 0));
     }
 
@@ -267,21 +269,21 @@ public final class WorkflowLabInitializer {
                 Map.of("code", "REJECT", "label", "驳回", "reasonRequired", true, "reasonMinLength", 5)));
         return List.of(
                 new WorkflowNodeConfig("Task_Manager", "部门主管审批", "userTask",
-                        "DEPT_MANAGER", "DEPT_MANAGER", "SINGLE", 100, FORM_CODE,
+                        "DEPT_MANAGER", "DEPT_MANAGER", "SINGLE", 100, List.of(FORM_CODE),
                         Map.of(), managerButtons, Map.of("onEnter", "NOTIFY"), Map.of(), 0),
                 new WorkflowNodeConfig("Task_Countersign", "三人会签", "userTask",
-                        "ROLE", "COUNTERSIGNER", "COUNTERSIGN", 60, FORM_CODE,
-                        Map.of("days", "READONLY"), Map.of("buttons", List.of(
+                        "ROLE", "COUNTERSIGNER", "COUNTERSIGN", 60, List.of(FORM_CODE),
+                        Map.of(FORM_CODE, Map.of("days", "READONLY")), Map.of("buttons", List.of(
                                 Map.of("code", "APPROVE", "label", "同意", "reasonRequired", false))),
                         Map.of(), Map.of(), 0),
                 new WorkflowNodeConfig("Task_Finance", "财务确认", "userTask",
-                        "ROLE", "FINANCE", "SINGLE", 100, FORM_CODE,
+                        "ROLE", "FINANCE", "SINGLE", 100, List.of(FORM_CODE),
                         Map.of(), Map.of(), Map.of(), Map.of(), 0),
                 new WorkflowNodeConfig("Flow_To_Countersign", "超过 3 天走会签", "sequenceFlow",
-                        "INITIATOR", "", "SINGLE", 100, null, Map.of(), Map.of(), Map.of(),
+                        "INITIATOR", "", "SINGLE", 100, List.of(), Map.of(), Map.of(), Map.of(),
                         Map.of("field", "days", "operator", ">", "valueType", "NUMBER", "value", 3), 0),
                 new WorkflowNodeConfig("Flow_To_Finance", "3 天内直接财务", "sequenceFlow",
-                        "INITIATOR", "", "SINGLE", 100, null, Map.of(), Map.of(), Map.of(),
+                        "INITIATOR", "", "SINGLE", 100, List.of(), Map.of(), Map.of(), Map.of(),
                         Map.of("field", "days", "operator", "<=", "valueType", "NUMBER", "value", 3), 0));
     }
 

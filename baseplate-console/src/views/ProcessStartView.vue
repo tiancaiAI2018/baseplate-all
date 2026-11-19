@@ -52,7 +52,7 @@
             </div>
             <p class="process-desc">{{ item.description || '暂无流程说明，可直接发起体验。' }}</p>
             <div class="process-foot">
-              <span class="hint">{{ item.formCode ? '需填写发起表单' : '无需填写表单' }}</span>
+              <span class="hint">{{ item.formDefinitions?.length ? `需填写 ${item.formDefinitions.length} 份发起表单` : '无需填写表单' }}</span>
               <el-button type="primary" @click="openStart(item)">
                 <el-icon style="margin-right: 4px"><Promotion /></el-icon>发起
               </el-button>
@@ -89,8 +89,14 @@
             </el-input>
           </el-form-item>
         </el-form>
-        <div v-if="startRules.length" class="start-form">
-          <FormRenderer ref="rendererRef" :rule="current?.formUiSchema || []" />
+        <div v-if="current?.formDefinitions?.length" class="start-form">
+          <div v-for="form in current.formDefinitions" :key="form.formCode" class="start-form-section">
+            <div class="form-section-title">
+              <span>{{ form.formName || form.formCode }}</span>
+              <el-tag size="small" type="info" effect="plain">基础表单</el-tag>
+            </div>
+            <FormRenderer :ref="(el: any) => setRenderer(form.formCode, el)" :rule="startRulesOf(form.formCode)" />
+          </div>
         </div>
         <el-alert v-else type="info" :closable="false" show-icon
                   title="该流程未配置发起表单，点击提交即可发起" style="margin-top: 4px" />
@@ -144,7 +150,11 @@ const businessKey = ref('')
 const submitting = ref(false)
 const startedId = ref('')
 const startedBusinessKey = ref('')
-const rendererRef = ref<InstanceType<typeof FormRenderer> | null>(null)
+const rendererRefs = new Map<string, InstanceType<typeof FormRenderer>>()
+function setRenderer(code: string, el: any) {
+  if (el) rendererRefs.set(code, el)
+  else rendererRefs.delete(code)
+}
 
 const instanceOpen = ref(false)
 const instanceId = ref('')
@@ -156,15 +166,16 @@ const filtered = computed(() => catalog.value.filter((item) => {
   const textOk = !text || `${item.name} ${item.description || ''} ${item.processKey}`.toLowerCase().includes(text)
   return catOk && textOk
 }))
-const startRules = computed(() => {
-  const raw = current.value?.formUiSchema
+function startRulesOf(code: string): any[] {
+  const form = (current.value?.formDefinitions || []).find((f: any) => f.formCode === code)
+  const raw = form?.formUiSchema
   if (!raw) return []
   if (Array.isArray(raw)) return raw
   try {
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed : (parsed?.rule || [])
   } catch { return [] }
-})
+}
 
 function fmt(value: any) { return value ? String(value).replace('T', ' ').slice(0, 16) : '—' }
 
@@ -221,6 +232,7 @@ function openStart(item: any) {
   current.value = item
   startedId.value = ''
   businessKey.value = makeBusinessKey()
+  rendererRefs.clear()
   startOpen.value = true
 }
 
@@ -231,21 +243,29 @@ function resetStart() {
 
 async function submitStart() {
   if (!current.value) return
-  if (startRules.value.length && rendererRef.value?.validate) {
-    try { await rendererRef.value.validate() } catch {
-      ElMessage.warning('表单还有未通过校验的字段，请先补全')
-      return
+  for (const form of current.value.formDefinitions || []) {
+    const renderer: any = rendererRefs.get(form.formCode)
+    if (renderer?.validate) {
+      try { await renderer.validate() } catch {
+        ElMessage.warning(`「${form.formName || form.formCode}」有未通过校验的字段，请先补全`)
+        return
+      }
     }
   }
   submitting.value = true
   try {
-    const formData = startRules.value.length ? (rendererRef.value?.formData?.() || {}) : {}
+    const formDataByCode: Record<string, any> = {}
+    for (const form of current.value.formDefinitions || []) {
+      const renderer: any = rendererRefs.get(form.formCode)
+      if (renderer?.formData) {
+        formDataByCode[form.formCode] = renderer.formData()
+      }
+    }
     const key = businessKey.value.trim() || makeBusinessKey()
     const { data } = await http.post('/api/workflow/instances', {
       processKey: current.value.processKey,
       businessKey: key,
-      formCode: current.value.formCode || undefined,
-      formData
+      formDataByCode
     })
     startedId.value = data.processInstanceId || data.id || ''
     startedBusinessKey.value = key
@@ -314,7 +334,10 @@ onMounted(() => { loadCatalog(); loadRecent() })
 .process-foot { display: flex; align-items: center; justify-content: space-between; border-top: 1px dashed var(--bp-line); padding-top: 12px; }
 
 .start-hero { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; padding: 14px 16px; border-radius: 12px; background: linear-gradient(120deg, #F2F8F5, #EAF2EF); border: 1px solid #DCE9E3; }
-.start-form { border: 1px solid var(--bp-line); border-radius: 12px; padding: 18px 20px 6px; background: #FBFCFB; }
+.start-form { border: 1px solid var(--bp-line); border-radius: 12px; padding: 8px 20px 6px; background: #FBFCFB; }
+.start-form-section { padding: 10px 0 14px; border-bottom: 1px dashed var(--bp-line); }
+.start-form-section:last-child { border-bottom: none; }
+.form-section-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: #1C1B18; margin-bottom: 10px; }
 .start-success { text-align: center; padding: 26px 10px 10px; }
 .success-icon {
   width: 58px; height: 58px; margin: 0 auto 14px; border-radius: 50%;

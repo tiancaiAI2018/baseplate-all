@@ -55,6 +55,13 @@ export function bpmnToSpec(modeler: any, fallbackKey: string): BpmnSpecSummary {
     if (bo.name) edge.name = bo.name
     const condition = bo.conditionExpression?.body
     if (condition) edge.condition = condition
+    // 驳回路由的标记与原始条件写在 flowable 扩展属性上；设计器回读时已把
+    // conditionExpression 还原成原始条件，这里再兜一层，避免 AI 读到编译守卫。
+    const attrs = bo.$attrs || {}
+    if (attrs['flowable:rejectRoute'] === 'true' || bo.rejectRoute === true) {
+      edge.rejectRoute = true
+      if (attrs['flowable:rejectCondition']) edge.condition = attrs['flowable:rejectCondition']
+    }
     if (element.source?.businessObject?.default?.id === bo.id) edge.isDefault = true
     edges.push(edge)
   }

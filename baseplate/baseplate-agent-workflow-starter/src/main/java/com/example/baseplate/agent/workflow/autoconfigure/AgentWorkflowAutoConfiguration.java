@@ -9,6 +9,7 @@ import com.example.baseplate.agent.workflow.WorkflowAgentTools;
 import com.example.baseplate.api.port.out.ProcessEnginePort;
 import com.example.baseplate.metadata.application.MetadataService;
 import com.example.baseplate.metadata.autoconfigure.MetadataAutoConfiguration;
+import com.example.baseplate.workflow.application.WorkflowAccessService;
 import com.example.baseplate.workflow.application.WorkflowDraftService;
 import com.example.baseplate.workflow.autoconfigure.WorkflowAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -24,14 +25,17 @@ import org.springframework.context.annotation.Bean;
 @AutoConfiguration(after = {AgentAutoConfiguration.class, WorkflowAutoConfiguration.class,
         MetadataAutoConfiguration.class})
 @ConditionalOnClass(name = "com.example.baseplate.agent.tool.AgentToolProvider")
-@ConditionalOnBean({WorkflowDraftService.class, ProcessEnginePort.class})
+@ConditionalOnBean({WorkflowDraftService.class, ProcessEnginePort.class,
+        WorkflowAccessService.class})
 public class AgentWorkflowAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(name = "workflowAgentToolProvider")
     public AgentToolProvider workflowAgentToolProvider(WorkflowDraftService draftService,
-                                                       ProcessEnginePort engine) {
-        return new WorkflowAgentToolProvider(new WorkflowAgentTools(draftService, engine));
+                                                       ProcessEnginePort engine,
+                                                       WorkflowAccessService access) {
+        return new WorkflowAgentToolProvider(
+                new WorkflowAgentTools(draftService, engine, access));
     }
 
     /**

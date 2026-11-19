@@ -24,7 +24,9 @@ import com.example.baseplate.api.model.WorkflowTaskDetail;
 import com.example.baseplate.api.port.out.CurrentUserProvider;
 import com.example.baseplate.api.port.out.ProcessEnginePort;
 import com.example.baseplate.workflow.adapter.out.persistence.WorkflowConfigRepository;
+import com.example.baseplate.workflow.application.FieldPolicyService;
 import com.example.baseplate.workflow.application.WorkflowAccessService;
+import com.example.baseplate.workflow.application.WorkflowConditionValidator;
 import com.example.baseplate.workflow.application.WorkflowLabInitializer;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -77,6 +79,32 @@ public class WorkflowController {
         String from = latestDefinitionId(request.processKey());
         List<WorkflowNodeConfig> configs = request.nodeConfigs() == null
                 ? List.of() : request.nodeConfigs();
+        // 字段权限值必须在部署前挡住非法配置（含 AI 生成的草稿），
+        // 否则错误配置会直到办理时才暴露，且可能被服务端的保守策略误伤。
+        for (WorkflowNodeConfig config : configs) {
+            FieldPolicyService.validatePolicyByForm(config.fieldPolicy());
+        }
+        // 连线条件引用的变量必须在部署时就存在来源：
+        // 「换了表单但条件还写旧字段」否则要等办理到网关才 500，前端只看到「服务内部错误」。
+        String tenant = tenant();
+        Map<String, java.util.Collection<String>> fieldsByForm = new LinkedHashMap<>();
+        for (Map<String, Object> form : configRepository.forms(tenant)) {
+            String code = String.valueOf(form.get("code"));
+            List<String> fields = new ArrayList<>();
+            for (Map<String, String> field : configRepository.formFields(tenant, code)) {
+                if (field.get("name") != null && !field.get("name").isBlank()) {
+                    fields.add(field.get("name"));
+                }
+            }
+            fieldsByForm.put(code, fields);
+        }
+        List<String> baseFormCodes = configRepository.setting(tenant, request.processKey())
+                .map(WorkflowProcessSetting::baseFormCodes).orElse(List.of());
+        WorkflowConditionValidator.Result conditionCheck = WorkflowConditionValidator.validate(
+                request.bpmnXml(), configs, baseFormCodes, fieldsByForm);
+        if (conditionCheck.hasErrors()) {
+            throw new IllegalArgumentException("BPMN 校验失败：" + conditionCheck.errorText());
+        }
         String deploymentId = engine.deploy(request.bpmnXml(), request.processKey(), configs);
         String to = latestDefinitionId(request.processKey());
         MigrationReport migration = null;
@@ -95,6 +123,8 @@ public class WorkflowController {
                 .filter(item -> request.processKey().equals(item.key()) && item.id().equals(to))
                 .map(ProcessDefinitionView::version).findFirst().orElse(null));
         result.put("nodeConfigCount", configs.size());
+        // 不阻断部署、但值得让调用方看到的提示（例如条件引用了接口传入的自定义变量）
+        result.put("conditionWarnings", conditionCheck.warnings());
         result.put("strategy", migration == null ? "KEEP_OLD" : "MIGRATE_ALL");
         result.put("migration", migration);
         return result;
@@ -207,7 +237,14 @@ public class WorkflowController {
         options.put("fieldTypes", List.of("STRING", "NUMBER", "MONEY", "DATE", "BOOLEAN", "SELECT"));
         options.put("roles", configRepository.roles(tenant));
         options.put("orgs", configRepository.orgs(tenant));
-        options.put("forms", configRepository.forms(tenant));
+        // 每个表单附带字段清单，供节点「字段权限」配置下拉使用（只读取已发布 schema）
+        List<Map<String, Object>> formsWithFields = new ArrayList<>();
+        for (Map<String, Object> form : configRepository.forms(tenant)) {
+            Map<String, Object> item = new LinkedHashMap<>(form);
+            item.put("fields", configRepository.formFields(tenant, String.valueOf(form.get("code"))));
+            formsWithFields.add(item);
+        }
+        options.put("forms", formsWithFields);
         return options;
     }
 
@@ -259,35 +296,38 @@ public class WorkflowController {
             }
             WorkflowProcessSetting effective = setting == null
                     ? WorkflowProcessSetting.defaults(definition.key()) : setting;
-            String formCode = effective.startFormCode();
-            if (formCode == null || formCode.isBlank()) {
-                formCode = firstFormCode(tenant, definition.key(), definition.version());
+            // 发起表单 = 流程级基础表单；未配置时兜底取首个 userTask 的表单
+            List<String> startCodes = effective.baseFormCodes();
+            if (startCodes.isEmpty()) {
+                startCodes = firstFormCodes(tenant, definition.key(), definition.version());
             }
-            String formSchema = null;
-            String formUiSchema = null;
-            if (formCode != null && !formCode.isBlank()) {
-                Map<String, Object> schema = configRepository.formSchema(tenant, formCode);
-                if (schema != null) {
-                    formSchema = schema.get("schema_json") == null ? null : String.valueOf(schema.get("schema_json"));
-                    formUiSchema = schema.get("ui_schema_json") == null ? null : String.valueOf(schema.get("ui_schema_json"));
+            List<WorkflowTaskDetail.FormView> formViews = new ArrayList<>();
+            for (String code : startCodes) {
+                Map<String, Object> schema = configRepository.formSchema(tenant, code);
+                if (schema == null) {
+                    continue;
                 }
+                formViews.add(new WorkflowTaskDetail.FormView(code, String.valueOf(schema.getOrDefault("name", code)),
+                        schema.get("schema_json") == null ? null : String.valueOf(schema.get("schema_json")),
+                        schema.get("ui_schema_json") == null ? null : String.valueOf(schema.get("ui_schema_json")),
+                        Map.of(), true));
             }
             String name = definition.name() == null || definition.name().isBlank()
                     ? definition.key() : definition.name();
             result.add(new StartableProcessView(definition.key(), name, effective.description(),
                     effective.category(), effective.icon(), definition.version(), definition.id(),
-                    formCode, formSchema, formUiSchema, effective.sortOrder()));
+                    formViews, effective.sortOrder()));
         }
         result.sort(Comparator.comparingInt(StartableProcessView::sortOrder)
                 .thenComparing(StartableProcessView::processKey));
         return result;
     }
 
-    private String firstFormCode(String tenant, String processKey, int version) {
+    private List<String> firstFormCodes(String tenant, String processKey, int version) {
         return configRepository.forDefinition(tenant, processKey, version).stream()
-                .filter(config -> "userTask".equals(config.nodeType())
-                        && config.formCode() != null && !config.formCode().isBlank())
-                .map(WorkflowNodeConfig::formCode).findFirst().orElse(null);
+                .filter(config -> "userTask".equals(config.nodeType()) && !config.formCodes().isEmpty())
+                .flatMap(config -> config.formCodes().stream())
+                .distinct().toList();
     }
 
     // ---------- 流程发起配置（发起侧数据权限） ----------
@@ -318,7 +358,7 @@ public class WorkflowController {
                 request.icon() == null ? "" : request.icon(),
                 scopeType,
                 request.startScopeValue() == null ? "" : request.startScopeValue(),
-                request.startFormCode() == null ? "" : request.startFormCode(),
+                request.baseFormCodes() == null ? List.of() : request.baseFormCodes(),
                 request.enabled() == null || request.enabled(),
                 request.sortOrder() == null ? 0 : request.sortOrder());
         configRepository.saveSetting(tenant(), setting, currentUser.current().username());
@@ -342,20 +382,16 @@ public class WorkflowController {
         access.requireStart(user, setting, request.processKey());
         Map<String, Object> variables = new LinkedHashMap<>(
                 request.variables() == null ? Map.of() : request.variables());
-        if (request.formData() != null) {
-            variables.put("formData", request.formData());
-        }
+        Map<String, Map<String, Object>> byForm = request.formDataByCode() == null
+                ? Map.of() : request.formDataByCode();
+        variables.put("__formDataByCode", byForm);
         String instanceId = engine.start(request.processKey(), request.businessKey(), variables);
-        String formCode = request.formCode();
-        if (formCode == null || formCode.isBlank()) {
-            formCode = setting != null && setting.startFormCode() != null && !setting.startFormCode().isBlank()
-                    ? setting.startFormCode()
-                    : firstFormCode(tenant, request.processKey(),
-                            configRepository.latestVersion(tenant, request.processKey()));
-        }
-        if (formCode != null && !formCode.isBlank() && request.formData() != null) {
-            configRepository.saveFormData(tenant, instanceId, "__START__",
-                    formCode, request.formData(), user.username());
+        // 发起表单数据按 formCode 分别落库（wf_form_data 天然按 form_code 分列）
+        for (Map.Entry<String, Map<String, Object>> entry : byForm.entrySet()) {
+            if (entry.getKey() != null && !entry.getKey().isBlank() && entry.getValue() != null) {
+                configRepository.saveFormData(tenant, instanceId, "__START__",
+                        entry.getKey(), entry.getValue(), user.username());
+            }
         }
         return Map.of("processInstanceId", instanceId);
     }
@@ -572,8 +608,8 @@ public class WorkflowController {
     }
 
     public record StartRequest(String processKey, String businessKey,
-                               Map<String, Object> variables, String formCode,
-                               Map<String, Object> formData) {
+                               Map<String, Object> variables,
+                               Map<String, Map<String, Object>> formDataByCode) {
     }
 
     public record CompleteRequest(Decision decision, Map<String, Object> values) {
@@ -597,6 +633,6 @@ public class WorkflowController {
 
     public record SettingRequest(String category, String description, String icon,
                                  String startScopeType, String startScopeValue,
-                                 String startFormCode, Boolean enabled, Integer sortOrder) {
+                                 List<String> baseFormCodes, Boolean enabled, Integer sortOrder) {
     }
 }

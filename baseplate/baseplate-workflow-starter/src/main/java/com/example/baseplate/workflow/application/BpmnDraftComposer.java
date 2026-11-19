@@ -24,9 +24,13 @@ public class BpmnDraftComposer {
                             Map<String, Object> config) {
     }
 
-    /** 连线；condition 支持 ${amount >= 5000} 或结构化 field/operator/value。 */
+    /**
+     * 连线；condition 支持 ${amount >= 5000} 或结构化 field/operator/value。
+     * rejectRoute=true 表示这条线是驳回路由：编译期加正向守卫并写扩展属性，
+     * 运行期驳回时按条件选它指向的节点作为退回目标。
+     */
     public record DraftEdge(String id, String from, String to, String name,
-                            String condition, Boolean isDefault) {
+                            String condition, Boolean isDefault, Boolean rejectRoute) {
     }
 
     public record DraftSpec(String processKey, String name, String description,
@@ -79,10 +83,21 @@ public class BpmnDraftComposer {
             DraftEdge edge = edges.get(i);
             String flowId = flowIds.get(i);
             String condition = conditionExpression(edge);
+            boolean rejectRoute = Boolean.TRUE.equals(edge.rejectRoute());
             body.append("    <sequenceFlow id=\"%s\" sourceRef=\"%s\" targetRef=\"%s\""
                     .formatted(flowId, edge.from(), edge.to()));
             if (edge.name() != null && !edge.name().isBlank()) {
                 body.append(" name=\"").append(xml(edge.name())).append("\"");
+            }
+            if (rejectRoute) {
+                // 与 NodeConfigCompiler 完全一致的标记口径，运行期据此识别驳回路由；
+                // 原始条件单独存一份，前端回读设计时用它还原，避免守卫被二次包装。
+                body.append(" flowable:rejectRoute=\"true\"");
+                if (!condition.isBlank()) {
+                    body.append(" flowable:rejectCondition=\"")
+                            .append(xml(condition)).append("\"");
+                }
+                condition = RejectRouteSupport.guardedExpression(condition.isBlank() ? null : condition);
             }
             if (condition.isBlank()) {
                 body.append("/>%n".formatted());
@@ -142,10 +157,7 @@ public class BpmnDraftComposer {
         if (!assignee.isBlank()) {
             attrs.append(" flowable:assignee=\"").append(xml(assignee)).append("\"");
         }
-        String formCode = str(config.get("formCode"));
-        if (!formCode.isBlank()) {
-            attrs.append(" flowable:formKey=\"").append(xml(formCode)).append("\"");
-        }
+        // 多表单：不再写 BPMN formKey（单值、无消费者），表单绑定由节点配置 formCodes 承载
         Object priority = config.get("priority");
         if (priority != null) {
             attrs.append(" flowable:priority=\"").append(xml(String.valueOf(priority))).append("\"");
@@ -231,7 +243,7 @@ public class BpmnDraftComposer {
         List<DraftEdge> result = new ArrayList<>();
         for (int i = 0; i < nodes.size() - 1; i++) {
             result.add(new DraftEdge(null, nodes.get(i).id(), nodes.get(i + 1).id(),
-                    null, null, false));
+                    null, null, false, false));
         }
         return result;
     }
@@ -250,7 +262,7 @@ public class BpmnDraftComposer {
             return edges;
         }
         List<DraftEdge> result = new ArrayList<>(edges);
-        result.add(0, new DraftEdge(null, start.id(), first.id(), null, null, false));
+        result.add(0, new DraftEdge(null, start.id(), first.id(), null, null, false, false));
         return result;
     }
 

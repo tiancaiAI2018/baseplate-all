@@ -228,6 +228,21 @@ public final class AgentDefinitionRepository {
                     descriptor.permissionCode(), descriptor.risk().name(),
                     descriptor.minApproval().name(), descriptor.defaultApproval().name());
         }
+        // 只 upsert 不删除会留下「幽灵工具」：代码里已经删掉的工具仍然出现在配置页，
+        // 模型也可能被喂到不存在的工具名。内置目录以代码为准，多余的直接清掉。
+        if (descriptors.isEmpty()) {
+            return;
+        }
+        String placeholders = descriptors.stream()
+                .map(item -> "?")
+                .collect(Collectors.joining(","));
+        jdbc.update("DELETE FROM agent_tool_definition"
+                        + " WHERE tenant_id = '*' AND builtin = TRUE"
+                        + " AND tool_code NOT IN (" + placeholders + ")",
+                descriptors.stream().map(ToolDescriptor::code).toArray());
+        // 绑定表跟着清，否则删掉的工具会在 agent_definition_tool 里留下孤儿行
+        jdbc.update("DELETE FROM agent_definition_tool"
+                + " WHERE tool_code NOT IN (SELECT tool_code FROM agent_tool_definition)");
     }
 
     /** 可见工具目录 = 全局内置 + 本租户自定义。 */

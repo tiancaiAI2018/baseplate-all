@@ -107,13 +107,16 @@ python build/verify-docs.py
 
 | # | 操作 | 期望 |
 |---|---|---|
-| 1 | 启动日志 | `智能体工具注册完成: 14 个`；数量对不上说明 provider 没被扫描或工具重名 |
+| 1 | 启动日志 | `智能体工具注册完成: 16 个`；数量对不上说明 provider 没被扫描或工具重名 |
 | 2 | `GET /api/agent/definitions` | 返回定义；模型密钥字段不出现 |
-| 3 | `GET /api/agent/definitions/{id}/tools` | 14 个工具都在；内置工具 `editable=false` |
+| 3 | `GET /api/agent/definitions/{id}/tools` | 16 个工具都在；内置工具 `editable=false`；代码里删掉的工具不应残留 |
 | 4 | 流程图页问「我有哪些待办」 | SSE 出现 `tool_call → tool_result → ui`；消息里出现任务卡片 |
 | 5 | 流程设计器问「看看我现在画的流程」 | 出现 `external_tool_call`，前端执行后回传，再出现 `ui` 和 `workflow_preview` 卡片 |
 | 6 | 表单设计器问「看看我当前这个表单」 | `external_tool_call` 返回 `code/name/fields`；字段与画布一致 |
-| 7 | 「帮我同意第一条待办」 | 先 `workflow_list_my_tasks`、再 `workflow_task_detail`、最后 `workflow_complete_task`；待办列表自动刷新 |
+| 7 | 「我发起的还没走完的流程有哪些」 | 调 `workflow_list_my_started`，出现 `instance_list` 卡片，行为「看进度」 |
+| 7.1 | 「业务单号 XXX 这单走到哪一步了」 | 调 `workflow_instance_progress`，出现 `instance_progress` 卡片，图上当前节点高亮 |
+| 7.2 | 「我还有多少事没处理」 | 调 `workflow_my_summary`，出现 `stat_group` 四个数字卡片 |
+| 7.3 | 「帮我同意第一条待办」 | 不调用任何办理工具，回答里引导用户点「办理」；这是刻意的，AI 不代签 |
 | 8 | 把某工具审批策略设为 `ASK` 后触发 | 流停住并出现 HITL 卡；同意后同一气泡继续 |
 | 9 | 换页继续旧会话 | 不报 `Tool not found`；`agent_session.page_key` 已更新为当前页面 |
 | 10 | 恢复流（刷新页面后继续） | 历史里的 `ui` 卡片、HITL 审批卡能重新出现 |
