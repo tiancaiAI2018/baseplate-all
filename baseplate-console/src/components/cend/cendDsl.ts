@@ -261,3 +261,67 @@ export function schemaOf(dsl: CendPageDsl) {
   visit(dsl.blocks)
   return { fields }
 }
+
+const TMAGIC_TYPES = new Set(['text', 'button', 'img', 'container', 'phone-input', 'share-button'])
+
+function toTmagicNode(raw: any, depth = 0): any {
+  if (!raw || typeof raw !== 'object' || depth > 5) return null
+  const type = TMAGIC_TYPES.has(raw.type) ? raw.type : 'text'
+  const props = raw.props && typeof raw.props === 'object' ? raw.props : raw
+  const node: Record<string, any> = {
+    id: safeText(raw.id) || newId('node'),
+    type,
+    name: safeText(raw.name, safeText(type)),
+    style: safeStyle(raw.style)
+  }
+  if (type === 'text') {
+    node.text = safeText(props.text ?? props.title)
+    if (!node.style.fontSize) node.style.fontSize = '16px'
+  }
+  if (type === 'button') {
+    node.text = safeText(props.text ?? props.title, '按钮')
+    if (!node.style.backgroundColor) node.style.backgroundColor = safeText(props.color, '#409eff')
+    if (!node.style.color) node.style.color = '#ffffff'
+    if (!node.style.padding) node.style.padding = '10px 20px'
+    if (!node.style.borderRadius) node.style.borderRadius = '6px'
+  }
+  if (type === 'img') {
+    node.src = safeMedia(props.src ?? props.url)
+  }
+  if (type === 'phone-input') {
+    node.placeholder = safeText(props.placeholder, '请输入手机号')
+    node.prefix = safeText(props.prefix)
+    node.value = ''
+  }
+  if (type === 'share-button') {
+    node.text = safeText(props.text, '分享活动链接')
+  }
+  if (type === 'container') {
+    const children = Array.isArray(raw.children) ? raw.children : Array.isArray(props.children) ? props.children : []
+    node.items = children.map((child: any) => toTmagicNode(child, depth + 1)).filter(Boolean)
+    if (!node.style.position) node.style.position = 'relative'
+    if (!node.style.width) node.style.width = '100%'
+    if (!node.style.minHeight) node.style.minHeight = '80px'
+  }
+  return node
+}
+
+export function buildTmagicDsl(args: Record<string, any>) {
+  const componentsRaw = parseMaybeJson(args.components)
+  const components = Array.isArray(componentsRaw) ? componentsRaw : []
+  const background = safeText(args.background, '#ffffff')
+  const page: Record<string, any> = {
+    id: 'page_home',
+    name: 'index',
+    type: 'page',
+    layout: 'absolute',
+    style: { position: 'relative', width: '100%', height: '100%', backgroundColor: background },
+    items: components.map((item: any) => toTmagicNode(item)).filter(Boolean)
+  }
+  return {
+    id: 'cend_app',
+    name: safeText(args.name, safeText(args.pageCode, 'C端页面')),
+    type: 'app',
+    items: [page]
+  }
+}

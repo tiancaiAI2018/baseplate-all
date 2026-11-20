@@ -41,7 +41,7 @@ public final class CendAgentTools {
     }
 
     @Tool(name = "cend_page_get_draft",
-            description = "读取 C 端页面最新版本的主题、画布和区块结构。"
+            description = "读取 C 端页面最新版本的 tmagic DSL（页面树、组件与样式）。"
                     + "用户要求修改已有页面时，先调用它拿到现有 DSL，再生成完整参数。")
     public String getPage(RuntimeContext ctx,
                           @ToolParam(name = "pageCode", description = "页面编码") String pageCode) {

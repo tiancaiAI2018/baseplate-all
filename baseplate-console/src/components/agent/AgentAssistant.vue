@@ -219,7 +219,11 @@ import AgentBpmnCard from './AgentBpmnCard.vue'
 import AgentInstanceProgress from './AgentInstanceProgress.vue'
 import InstanceDetailDrawer from '../InstanceDetailDrawer.vue'
 import { buildFormArtifacts, FIELD_NAME_PATTERN, normalizeAiFields } from './formRuleBuilder'
-import { normalizeAiPage, schemaOf } from '../cend/cendDsl'
+import { buildTmagicDsl } from '../cend/cendDsl'
+import {
+  cendAddComponent, cendBindEvent, cendGetTree, cendMoveComponent,
+  cendRemoveComponent, cendScreenshot, cendUpdateComponent
+} from '../../api/cendActions'
 
 const route = useRoute()
 const router = useRouter()
@@ -333,15 +337,15 @@ registerAgentExternalTool('cend_page_create_draft', async (args) => {
   if (!FIELD_NAME_PATTERN.test(pageCode)) {
     return { ok: false, error: '页面编码必须以小写字母开头，只能包含小写字母、数字和下划线' }
   }
-  const dsl = normalizeAiPage(args)
-  if (!dsl.blocks.length) {
-    return { ok: false, error: '区块列表为空，无法生成 C 端页面' }
+  const dsl = buildTmagicDsl(args)
+  if (!dsl.items[0].items.length) {
+    return { ok: false, error: '组件列表为空，无法生成 C 端页面' }
   }
   try {
     const { data } = await http.post(`/api/metadata/CEND_PAGE/${pageCode}`, {
       name: args.name || pageCode,
-      schema: schemaOf(dsl),
-      uiSchema: dsl
+      schema: { fields: [] },
+      uiSchema: { version: 2, dsl }
     })
     router.push({
       path: '/cend/pages/design',
@@ -352,7 +356,7 @@ registerAgentExternalTool('cend_page_create_draft', async (args) => {
       result: {
         pageCode,
         version: data.version,
-        blockCount: dsl.blocks.length,
+        componentCount: dsl.items[0].items.length,
         message: '已在 C 端页面设计器打开草稿，等待用户确认或修改'
       }
     }
@@ -362,19 +366,31 @@ registerAgentExternalTool('cend_page_create_draft', async (args) => {
 })
 
 /** 外部工具：读取当前 C 端页面设计器内容（含未保存修改）。 */
-registerAgentExternalTool('cend_page_get_canvas', async () => {
+registerAgentExternalTool('cend_page_get_canvas', async (args) => {
   const snapshot = await readAgentCanvas('cend/pages/design')
   if (!snapshot.available || !snapshot.data) {
     return { ok: false, error: snapshot.error || '当前 C 端页面设计器不可用' }
   }
-  return {
-    ok: true,
-    result: {
-      ...snapshot.data,
-      message: '已读取当前 C 端页面画布（含未保存修改）'
-    }
+  const result: Record<string, any> = {
+    ...snapshot.data,
+    message: '已读取当前 C 端页面画布（含未保存修改）'
   }
+  if (args?.includeScreenshot === true) {
+    try {
+      const screenshot = await cendScreenshot({})
+      if (screenshot.ok) result.screenshot = (screenshot.result as any)?.screenshot
+    } catch { void 0 }
+  }
+  return { ok: true, result }
 })
+
+registerAgentExternalTool('cend_page_screenshot', async (args) => await cendScreenshot(args))
+registerAgentExternalTool('cend_page_get_tree', async (args) => await cendGetTree(args))
+registerAgentExternalTool('cend_page_add_component', async (args) => await cendAddComponent(args))
+registerAgentExternalTool('cend_page_update_component', async (args) => await cendUpdateComponent(args))
+registerAgentExternalTool('cend_page_remove_component', async (args) => await cendRemoveComponent(args))
+registerAgentExternalTool('cend_page_move_component', async (args) => await cendMoveComponent(args))
+registerAgentExternalTool('cend_page_bind_event', async (args) => await cendBindEvent(args))
 
 /**
  * 外部工具：读取当前流程设计器画布（含未保存修改）。

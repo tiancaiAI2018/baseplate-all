@@ -54,8 +54,18 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http, { errorText } from '../api/client'
-import { emptyDsl } from '../components/cend/cendDsl'
-import { schemaOf } from '../components/cend/cendDsl'
+import { NodeType, type MApp } from '@tmagic/core'
+
+function emptyDsl(): MApp {
+  return {
+    id: 'cend_app', name: 'C端页面', type: NodeType.ROOT,
+    items: [{
+      id: 'page_home', name: 'index', type: NodeType.PAGE, layout: 'absolute',
+      style: { position: 'relative', width: '100%', height: '100%', backgroundColor: '#ffffff' },
+      items: []
+    }]
+  }
+}
 
 const router = useRouter()
 const pages = ref<any[]>([])
@@ -86,8 +96,8 @@ async function create() {
   try {
     await http.post(`/api/metadata/CEND_PAGE/${code}`, {
       name: newName.value || code,
-      schema: schemaOf(dsl),
-      uiSchema: dsl
+      schema: { fields: [] },
+      uiSchema: { version: 2, dsl }
     })
     createDialog.value = false
     await router.push({ path: '/cend/pages/design', query: { code } })

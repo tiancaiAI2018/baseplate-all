@@ -13,12 +13,24 @@
     "@element-plus/icons-vue": "^2.3.1",
     "@form-create/designer": "^3.6.0",
     "@form-create/element-ui": "^3.3.6",
+    "@tmagic/core": "^1.8.5",
+    "@tmagic/editor": "^1.8.5",
+    "@tmagic/element-plus-adapter": "^1.8.5",
+    "@tmagic/form": "^1.8.5",
+    "@tmagic/vue-button": "^1.0.0",
+    "@tmagic/vue-container": "^2.0.0",
+    "@tmagic/vue-img": "^1.0.0",
+    "@tmagic/vue-page": "^1.0.0",
+    "@tmagic/vue-runtime-help": "^2.0.6",
+    "@tmagic/vue-text": "^1.0.0",
     "axios": "^1.8.4",
     "bpmn-js": "^18.3.1",
     "dompurify": "^3.2.4",
     "element-plus": "^2.9.7",
     "highlight.js": "^11.11.1",
+    "html-to-image": "^1.11.13",
     "markdown-it": "^14.1.0",
+    "monaco-editor": "^0.57.0",
     "pinia": "^3.0.1",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
@@ -26,6 +38,7 @@
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
     "@vitejs/plugin-vue": "^5.2.3",
+    "sass": "^1.108.2",
     "typescript": "^5.8.2",
     "vite": "^6.2.4"
   }

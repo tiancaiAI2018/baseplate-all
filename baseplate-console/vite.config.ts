@@ -5,6 +5,7 @@ import vue from '@vitejs/plugin-vue'
 const apiTarget = process.env.BP_API || 'http://localhost:8080'
 
 export default defineConfig({
+  define: { global: 'globalThis' },
   plugins: [vue()],
   server: {
     port: 5173,
@@ -16,6 +17,13 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    chunkSizeWarningLimit: 2000
+    chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        playground: 'tmagic-runtime/playground.html',
+        page: 'tmagic-runtime/page.html'
+      }
+    }
   }
 })
