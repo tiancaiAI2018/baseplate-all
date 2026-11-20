@@ -30,17 +30,20 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * 按「Agent 配置 + 页面」构建 ReActAgent 并缓存。
+ * 按 Agent 配置构建 ReActAgent 并缓存。
  *
  * <p>agentscope 的 Agent 是无状态的（会话状态走 AgentStateStore），
- * 所以同一份配置可以复用；缓存键里带 revision 与页面，配置一改自然换新实例。</p>
+ * 所以同一份配置可以复用；缓存键里带 revision，配置一改自然换新实例。</p>
+ *
+ * <p>pageKey 只在入口处决定「这个 Agent / 工具能否在本页使用」，不进入提示词与缓存键：
+ * 提示词前缀保持稳定，才能命中厂商侧的 prompt 缓存。</p>
  */
 public final class AgentRuntimeFactory {
 
     private static final String DEFAULT_SYSTEM_PROMPT = """
             你是 BASEPLATE 业务基盘的控制台助手。
             回答要简短、准确；不确定的信息先查工具，不要编造。
-            只能调用提供的工具，不要尝试访问当前页面之外的功能。
+            只能调用提供的工具，不要尝试访问工具之外的功能。
             """;
 
     private final ToolRegistry toolRegistry;
@@ -63,7 +66,7 @@ public final class AgentRuntimeFactory {
         this.definitionRepository = definitionRepository;
     }
 
-    public ReActAgent get(String tenant, AgentDefinition definition, String pageKey,
+    public ReActAgent get(String tenant, AgentDefinition definition,
                           Set<String> enabledTools, Map<String, ApprovalMode> policies,
                           List<String> skillNames) {
         String policyKey = policies.entrySet().stream()
@@ -73,14 +76,16 @@ public final class AgentRuntimeFactory {
         // null 表示未配置技能（全部可用），空列表表示明确不使用技能；两者缓存必须分开
         String skillKey = skillNames == null ? "*"
                 : String.join(",", skillNames.stream().sorted().toList());
-        String cacheKey = tenant + ":" + definition.id() + ":" + definition.revision() + ":" + pageKey
+        // enabledTools 已在 selectTools 里按 pageKey 筛过：页面差异会体现在工具集合上，
+        // 集合相同就共享实例，无需再把 pageKey 拼进缓存键。
+        String cacheKey = tenant + ":" + definition.id() + ":" + definition.revision()
                 + ":" + String.join(",", enabledTools.stream().sorted().toList())
                 + ":" + policyKey + ":" + skillKey;
         return cache.computeIfAbsent(cacheKey,
-                key -> build(tenant, definition, pageKey, enabledTools, policies, skillNames));
+                key -> build(tenant, definition, enabledTools, policies, skillNames));
     }
 
-    private ReActAgent build(String tenant, AgentDefinition definition, String pageKey,
+    private ReActAgent build(String tenant, AgentDefinition definition,
                              Set<String> enabledTools, Map<String, ApprovalMode> policies,
                              List<String> skillNames) {
         Toolkit toolkit = new Toolkit();
@@ -97,9 +102,9 @@ public final class AgentRuntimeFactory {
         // 代码声明的外部工具：只下发 schema，参数与结果走 external_tool_call 事件
         for (AgentToolSpec spec : toolRegistry.all()) {
             ToolDescriptor descriptor = spec.descriptor();
+            // 页面可用性已在入口的 selectTools 里校验，这里只按启用集合注册
             if (descriptor.type() == ToolType.EXTERNAL
-                    && enabledTools.contains(descriptor.code())
-                    && descriptor.allowedOnPage(pageKey)) {
+                    && enabledTools.contains(descriptor.code())) {
                 Map<String, Object> schema = descriptor.paramsSchema().isEmpty()
                         ? Map.of("type", "object", "properties", Map.of())
                         : descriptor.paramsSchema();
@@ -112,9 +117,7 @@ public final class AgentRuntimeFactory {
         }
 
         for (ToolDescriptor descriptor : toolRegistry.descriptors()) {
-            boolean allowed = enabledTools.contains(descriptor.code())
-                    && descriptor.allowedOnPage(pageKey);
-            if (!allowed) {
+            if (!enabledTools.contains(descriptor.code())) {
                 toolkit.removeTool(descriptor.code());
             }
         }
@@ -126,9 +129,7 @@ public final class AgentRuntimeFactory {
                 continue;
             }
             definitionRepository.findTool(tenant, toolCode).ifPresent(row -> {
-                boolean pageAllowed = row.pages().isEmpty() || row.pages().contains("*")
-                        || row.pages().contains(pageKey);
-                if (row.toolType() == ToolType.EXTERNAL && pageAllowed) {
+                if (row.toolType() == ToolType.EXTERNAL) {
                     Map<String, Object> schema = row.paramsSchema().isEmpty()
                             ? Map.of("type", "object", "properties", Map.of())
                             : row.paramsSchema();
@@ -137,7 +138,7 @@ public final class AgentRuntimeFactory {
                             .description(row.description() == null ? row.name() : row.description())
                             .parameters(schema)
                             .build());
-                } else if (row.toolType() == ToolType.CUSTOM_INTERNAL && pageAllowed) {
+                } else if (row.toolType() == ToolType.CUSTOM_INTERNAL) {
                     // 服务端 HTTP 工具：参数、超时、内网拦截都在 HttpApiTool 里
                     toolkit.registerAgentTool(new HttpApiTool(row.toolCode(), row.name(),
                             row.description(), row.paramsSchema(), row.config(),
@@ -148,7 +149,7 @@ public final class AgentRuntimeFactory {
 
         ReActAgent.Builder builder = ReActAgent.builder()
                 .name("baseplate-" + definition.agentCode())
-                .sysPrompt(systemPrompt(definition, pageKey))
+                .sysPrompt(systemPrompt(definition))
                 .model(modelFactory.build(definition))
                 .toolkit(toolkit)
                 .maxIters(properties.getMaxIters())
@@ -212,17 +213,15 @@ public final class AgentRuntimeFactory {
     }
 
     /**
-     * 系统提示词 = 配置内容 + 页面边界。
+     * 系统提示词 = 配置内容 + 通用运行规则。
      *
-     * <p>不再拼接「可用工具」列表：工具已经由 toolkit 的 schema 暴露给模型，
-     * 在提示词里重复一遍只会让前缀随工具集变化，破坏厂商侧的 prompt 缓存。</p>
+     * <p>不拼接 pageKey、可用工具列表这类每轮可能变化的信息：系统提示词是请求的固定前缀，
+     * 前缀不稳定就无法命中厂商侧的 prompt 缓存。页面范围只在入口校验，不进入提示词。</p>
      */
-    private String systemPrompt(AgentDefinition definition, String pageKey) {
+    private String systemPrompt(AgentDefinition definition) {
         String base = definition.systemPrompt() == null || definition.systemPrompt().isBlank()
                 ? DEFAULT_SYSTEM_PROMPT : definition.systemPrompt();
-        return base + "\n\n[运行边界]\n当前页面: " + pageKey
-                + "\n只能处理与当前页面相关的事务，超出范围请直接说明无法处理。"
-                + "\n工具返回失败时必须如实告知用户失败原因，绝不能声称成功。";
+        return base + "\n\n[运行规则]\n工具返回失败时必须如实告知用户失败原因，绝不能声称成功。";
     }
 
     /** 配置变更后清掉旧实例，避免继续使用旧提示词/旧工具集。 */

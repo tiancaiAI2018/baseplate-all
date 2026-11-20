@@ -150,7 +150,7 @@ public final class AgentChatService {
 
         try {
             ToolSelection selection = selectTools(tenant, agent, command.pageKey(), user);
-            ReActAgent runtime = runtimeFactory.get(tenant, agent, command.pageKey(),
+            ReActAgent runtime = runtimeFactory.get(tenant, agent,
                     selection.enabled(), selection.policies(), skillNames(tenant, agent));
             RuntimeContext context = context(tenant, user, session, command.pageKey());
             syncPermissionPolicy(runtime, context, selection.policies());
@@ -212,7 +212,7 @@ public final class AgentChatService {
                     "agentCode", agent.agentCode(),
                     "agentName", agent.name()));
             ToolSelection selection = selectTools(tenant, agent, pageKey, user);
-            ReActAgent runtime = runtimeFactory.get(tenant, agent, pageKey,
+            ReActAgent runtime = runtimeFactory.get(tenant, agent,
                     selection.enabled(), selection.policies(), skillNames(tenant, agent));
             RuntimeContext context = context(tenant, user, session, pageKey);
             syncPermissionPolicy(runtime, context, selection.policies());
@@ -531,7 +531,7 @@ public final class AgentChatService {
                     "agentCode", agent.agentCode(),
                     "agentName", agent.name()));
             ToolSelection selection = selectTools(tenant, agent, pageKey, user);
-            ReActAgent runtime = runtimeFactory.get(tenant, agent, pageKey,
+            ReActAgent runtime = runtimeFactory.get(tenant, agent,
                     selection.enabled(), selection.policies(), skillNames(tenant, agent));
             RuntimeContext context = context(tenant, user, session, pageKey);
             syncPermissionPolicy(runtime, context, selection.policies());
@@ -954,7 +954,7 @@ public final class AgentChatService {
         AgentDefinition agent = definitions.find(tenant, agentId)
                 .orElseThrow(() -> new BaseplateException("NOT_FOUND", "智能体不存在"));
         long started = System.currentTimeMillis();
-        ReActAgent runtime = runtimeFactory.get(tenant, agent, "*", Set.of(), Map.of(),
+        ReActAgent runtime = runtimeFactory.get(tenant, agent, Set.of(), Map.of(),
                 skillNames(tenant, agent));
         RuntimeContext context = RuntimeContext.builder()
                 .userId(tenant + ":" + "config-test")

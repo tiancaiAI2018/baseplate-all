@@ -3,11 +3,9 @@ package com.example.baseplate.agent.tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 工具注册表。
@@ -41,26 +39,9 @@ public final class ToolRegistry {
         return specs.values().stream().map(AgentToolSpec::descriptor).toList();
     }
 
-    /** 全部工具，供运行时注册处理器后按页面/启用状态裁剪。 */
+    /** 全部工具，供运行时注册处理器后按启用集合裁剪。 */
     public List<AgentToolSpec> all() {
         return List.copyOf(specs.values());
-    }
-
-    /**
-     * 取当前页面可用的工具。
-     *
-     * @param pageKey      请求页面，必须与工具声明匹配（空声明表示不限制）
-     * @param enabledCodes Agent 绑定的已启用工具；为空表示一个都不开放
-     */
-    public List<AgentToolSpec> forPage(String pageKey, Set<String> enabledCodes) {
-        List<AgentToolSpec> result = new ArrayList<>();
-        for (AgentToolSpec spec : specs.values()) {
-            boolean enabled = enabledCodes != null && enabledCodes.contains(spec.descriptor().code());
-            if (enabled && spec.descriptor().allowedOnPage(pageKey)) {
-                result.add(spec);
-            }
-        }
-        return result;
     }
 
     public AgentToolSpec find(String code) {
