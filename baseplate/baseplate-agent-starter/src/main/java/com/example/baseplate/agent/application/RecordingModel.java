@@ -1,6 +1,8 @@
 package com.example.baseplate.agent.application;
 
 import com.example.baseplate.agent.adapter.out.persistence.AgentModelCallRepository;
+import io.agentscope.core.agent.AgentBase;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -13,6 +15,7 @@ import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.model.ToolSchema;
 import reactor.core.publisher.Flux;
+import reactor.util.context.ContextView;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
@@ -34,8 +37,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 在这里拿到的就是「实际发送给模型 HTTP 接口」的最准确快照：messages 含 skill
  * 注入后的 system 消息，tools 含全部下发工具（自定义 + skill 自带）。</p>
  *
- * <p>会话标识通过输入消息的 metadata 携带（见 AgentChatService 的 trace metadata）；
- * 测试连接等没有 metadata 的调用自动跳过。落库失败只静默跳过，绝不影响对话链路。</p>
+ * <p>会话标识优先从本次调用的 Reactor Context 里取
+ * {@link AgentBase#RUNTIME_CONTEXT_KEY}（即 {@link RuntimeContext} 的 sessionId），
+ * 这是最可靠的通道：HITL 确认与外部工具结果恢复时，框架只从恢复消息的 metadata
+ * 里取 ConfirmResult / ToolResult，并不会把恢复消息本身写进模型上下文，所以
+ * 依赖 messages metadata 的关联会在这两条恢复路径上丢失，表现为「恢复后的模型
+ * 调用没有观测记录」。{@code streamEvents(msgs, context)} 会把 RuntimeContext
+ * 装进 Reactor Context，模型调用链内部始终可见。</p>
+ *
+ * <p>输入消息 metadata 里的会话标识保留为兜底通道（例如旧调用点或没有
+ * RuntimeContext 的路径）；测试连接等 sessionId 不是数字的调用自动跳过。
+ * 落库失败只静默跳过，绝不影响对话链路。</p>
  */
 public final class RecordingModel implements Model {
 
@@ -59,11 +71,19 @@ public final class RecordingModel implements Model {
         this.repository = repository;
     }
 
+    /** 会话归属：sessionId 一定是数字（agent_session 主键），tenant 缺省 default。 */
+    private record SessionRef(long sessionId, String tenant) {
+    }
+
     @Override
     public Flux<ChatResponse> stream(List<Msg> messages, List<ToolSchema> tools,
                                      GenerateOptions options) {
-        recordAsync(messages, tools, options);
-        return delegate.stream(messages, tools, options);
+        // deferContextual：订阅时才能读到上游 contextWrite 装进来的 RuntimeContext。
+        // HITL / 外部工具恢复路径靠它拿到会话标识，不能退回只看 messages metadata。
+        return Flux.deferContextual(contextView -> {
+            recordAsync(messages, tools, options, contextView);
+            return delegate.stream(messages, tools, options);
+        });
     }
 
     @Override
@@ -86,34 +106,67 @@ public final class RecordingModel implements Model {
         return delegate.getContextWindowSize();
     }
 
-    /** 序列化与落库都在独立线程：不阻塞响应流，写库失败也不打扰对话。 */
-    private void recordAsync(List<Msg> messages, List<ToolSchema> tools, GenerateOptions options) {
+    /** 只有会话归属解析留在订阅线程；序列化与落库全部丢到独立线程，不阻塞响应流。 */
+    private void recordAsync(List<Msg> messages, List<ToolSchema> tools, GenerateOptions options,
+                            ContextView contextView) {
         try {
-            Long sessionId = findMeta(messages, META_SESSION_ID) == null
-                    ? null : Long.valueOf(String.valueOf(findMeta(messages, META_SESSION_ID)));
-            if (sessionId == null) {
-                // 测试连接等没有会话标识的调用，跳过观测
+            SessionRef ref = resolveSession(messages, contextView);
+            if (ref == null) {
                 return;
             }
-            String tenant = String.valueOf(findMeta(messages, META_TENANT_ID));
+            long sessionId = ref.sessionId();
             int step = steps.computeIfAbsent(sessionId, key -> new AtomicInteger())
                     .incrementAndGet();
             if (steps.size() > 4096) {
                 // 简单防膨胀：会话很多时整体清零，序号从头累计
                 steps.clear();
             }
-            Map<String, Object> request = buildRequestBody(messages, tools, options);
-            String json = mapper.writeValueAsString(request);
             String model = getModelName();
+            String tenant = ref.tenant();
             executor.execute(() -> {
                 try {
+                    String json = mapper.writeValueAsString(buildRequestBody(messages, tools, options));
                     repository.record(tenant, sessionId, step, model, json);
                 } catch (RuntimeException ignored) {
                     // 观测数据写失败不影响对话
                 }
             });
         } catch (RuntimeException ignored) {
-            // metadata 缺失或格式异常，跳过观测
+            // 会话标识缺失或格式异常，跳过观测
+        }
+    }
+
+    /** 会话标识优先读 RuntimeContext；没有时回退输入消息 metadata。 */
+    private SessionRef resolveSession(List<Msg> messages, ContextView contextView) {
+        RuntimeContext runtimeContext = contextView.getOrDefault(
+                AgentBase.RUNTIME_CONTEXT_KEY, null);
+        if (runtimeContext != null) {
+            Long sessionId = parseSessionId(runtimeContext.getSessionId());
+            if (sessionId != null) {
+                Object tenant = runtimeContext.get("tenantId");
+                return new SessionRef(sessionId,
+                        tenant == null || String.valueOf(tenant).isBlank()
+                                ? "default" : String.valueOf(tenant));
+            }
+        }
+        Long sessionId = parseSessionId(findMeta(messages, META_SESSION_ID));
+        if (sessionId == null) {
+            return null;
+        }
+        Object tenant = findMeta(messages, META_TENANT_ID);
+        return new SessionRef(sessionId, tenant == null || String.valueOf(tenant).isBlank()
+                ? "default" : String.valueOf(tenant));
+    }
+
+    private Long parseSessionId(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return Long.valueOf(String.valueOf(raw).trim());
+        } catch (NumberFormatException e) {
+            // 测试连接等非会话场景（config-test-*）不是数字，直接跳过观测
+            return null;
         }
     }
 

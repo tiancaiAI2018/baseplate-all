@@ -11,6 +11,7 @@ import com.example.baseplate.api.exception.BaseplateException;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -19,7 +20,7 @@ import java.util.Map;
  *
  * <p>数据在对话过程中已经落库（agent_session / agent_message / agent_run /
  * agent_model_call），这里只做只读聚合。模型调用请求体由
- * {@link ModelCallObservabilityMiddleware} 在 onModelCall 拦截点采集，
+ * {@link RecordingModel} 在 Model.stream 拦截点采集，
  * 是实际发送给模型 HTTP 接口的最准确快照。</p>
  */
 public final class AgentObserveService {
@@ -59,7 +60,8 @@ public final class AgentObserveService {
                                 String systemPrompt,
                                 List<AgentSessionService.MessageView> messages,
                                 List<RunRow> runs,
-                                List<ModelCallRow> modelCalls) {
+                                List<ModelCallRow> modelCalls,
+                                Map<String, Object> mergedRequest) {
     }
 
     /**
@@ -100,7 +102,55 @@ public final class AgentObserveService {
         return new SessionDetail(row, systemPrompt,
                 sessionService.messageViews(sessionId),
                 runs.listBySession(sessionId),
-                calls);
+                calls,
+                mergeRequests(calls));
+    }
+
+    /**
+     * 把「每次调用的完整请求体」压成一份可整体阅读的请求。
+     *
+     * <p>请求体是累积的：第 N 次调用天然包含前 N-1 次的全部 messages，
+     * 逐份展示会大段重复。这里取 messages 最长的那一份作为完整对话，
+     * tools 只保留最近一次非空定义，采样参数取最新一次，页面因此只需渲染一遍。</p>
+     */
+    private Map<String, Object> mergeRequests(List<ModelCallRow> calls) {
+        Map<String, Object> widest = null;
+        Map<String, Object> toolsSource = null;
+        int widestSize = -1;
+        for (ModelCallRow call : calls) {
+            Map<String, Object> body = readRequest(call.requestJson());
+            if (body == null) {
+                continue;
+            }
+            int size = body.get("messages") instanceof List<?> list ? list.size() : 0;
+            if (size >= widestSize) {
+                widestSize = size;
+                widest = body;
+            }
+            if (body.get("tools") instanceof List<?> tools && !tools.isEmpty()) {
+                toolsSource = body;
+            }
+        }
+        if (widest == null) {
+            return Map.of();
+        }
+        Map<String, Object> merged = new LinkedHashMap<>(widest);
+        if (toolsSource != null && toolsSource != widest) {
+            merged.put("tools", toolsSource.get("tools"));
+        }
+        return merged;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readRequest(String requestJson) {
+        if (requestJson == null || requestJson.isBlank()) {
+            return null;
+        }
+        try {
+            return (Map<String, Object>) mapper.readValue(requestJson, Map.class);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** 导出：按筛选条件批量取会话，每会话附全部模型调用请求体（原样）。 */

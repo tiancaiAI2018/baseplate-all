@@ -101,25 +101,72 @@
           <div class="stat"><span class="stat-num">{{ detail.session.errorCount }}</span><span class="stat-label">错误轮次</span></div>
         </div>
 
-        <!-- system prompt 取自最近一次实际请求体，skill 注入后的真实内容 -->
-        <el-collapse class="prompt-collapse" v-if="detail.systemPrompt">
-          <el-collapse-item title="System Prompt（最近一次请求实际发送的固定前缀）" name="sp">
+        <!-- system prompt 与工具定义是请求的固定前缀，整个会话只展示一次 -->
+        <el-collapse class="prompt-collapse" v-if="detail.systemPrompt || toolDefs.length">
+          <el-collapse-item v-if="detail.systemPrompt"
+                            title="System Prompt（固定前缀，整个会话只发送一次）" name="sp">
             <pre class="prompt-text">{{ detail.systemPrompt }}</pre>
+          </el-collapse-item>
+          <el-collapse-item v-if="toolDefs.length"
+                            :title="`Tools（${toolDefs.length} 个工具定义，固定前缀，不再逐次重复）`"
+                            name="tools">
+            <pre class="prompt-text">{{ prettyValue(toolDefs) }}</pre>
           </el-collapse-item>
         </el-collapse>
 
         <el-collapse class="runs-collapse">
-          <el-collapse-item :title="`模型调用请求（${detail.modelCalls?.length || 0}）· 实际发送给模型 HTTP 接口的请求体`"
+          <el-collapse-item :title="`模型请求（共 ${detail.modelCalls?.length || 0} 次调用，已合并为一份完整内容）`"
                             name="calls">
-            <div v-for="call in detail.modelCalls || []" :key="call.id" class="call-item">
-              <div class="call-head">
-                <el-tag size="small" effect="plain">step {{ call.step }}</el-tag>
-                <span class="call-model">{{ call.model || '—' }}</span>
-              </div>
-              <pre class="call-json">{{ pretty(call.requestJson) }}</pre>
+            <div class="call-toolbar">
+              <el-radio-group v-model="viewMode" size="small">
+                <el-radio-button value="chat">对话视图</el-radio-button>
+                <el-radio-button value="json">JSON</el-radio-button>
+              </el-radio-group>
+              <span class="hint">
+                请求体是累积的，逐次展示会重复；这里只保留最完整的一份（导出仍按原始每次调用输出）
+              </span>
             </div>
-            <el-empty v-if="!detail.modelCalls?.length" description="没有模型调用记录（旧会话未采集）"
-                      :image-size="50" />
+
+            <div v-show="viewMode === 'chat' && mergedMessages.length" class="chat">
+              <div v-for="(message, index) in mergedMessages" :key="index"
+                   class="chat-row" :class="`role-${message.role}`">
+                <div class="chat-head">
+                  <el-tag size="small" effect="plain" :type="roleTagType(message.role)">
+                    {{ message.role }}
+                  </el-tag>
+                  <span v-if="message.name" class="hint">{{ message.name }}</span>
+                  <span v-if="message.tool_call_id" class="hint">
+                    tool_call_id: {{ message.tool_call_id }}
+                  </span>
+                </div>
+                <div class="chat-body">
+                  <div v-if="message.reasoning_content" class="chat-thinking">
+                    <div class="chat-label">reasoning</div>
+                    <pre class="chat-text">{{ message.reasoning_content }}</pre>
+                  </div>
+                  <pre v-if="contentText(message.content)" class="chat-text">{{ contentText(message.content) }}</pre>
+                  <div v-for="call in message.tool_calls || []" :key="call.id" class="chat-tool">
+                    <div class="chat-label">调用 {{ call.function?.name }}</div>
+                    <pre class="chat-text">{{ prettyValue(call.function?.arguments) }}</pre>
+                  </div>
+                </div>
+              </div>
+              <div v-if="trailingAnswer" class="chat-row role-assistant">
+                <div class="chat-head">
+                  <el-tag size="small" effect="plain" type="success">assistant</el-tag>
+                  <span class="hint">本轮最终回复（请求之后生成，不在请求体中）</span>
+                </div>
+                <div class="chat-body">
+                  <pre class="chat-text">{{ trailingAnswer.content }}</pre>
+                </div>
+              </div>
+            </div>
+
+            <pre v-show="viewMode === 'json' && Object.keys(detail.mergedRequest || {}).length"
+                 class="call-json">{{ prettyValue(detail.mergedRequest) }}</pre>
+
+            <el-empty v-if="!detail.modelCalls?.length"
+                      description="没有模型调用记录（旧会话未采集）" :image-size="50" />
           </el-collapse-item>
           <el-collapse-item :title="`逐轮指标（${detail.runs.length}）`" name="runs">
             <el-table :data="detail.runs" size="small">
@@ -190,6 +237,7 @@ interface SessionDetail {
   messages: Array<Record<string, any>>
   runs: Array<Record<string, any>>
   modelCalls: Array<Record<string, any>>
+  mergedRequest: Record<string, any>
 }
 
 const agents = ref<Array<{ id: number; agentCode: string; name: string }>>([])
@@ -203,8 +251,37 @@ const filters = ref({ agentId: undefined as number | undefined, userId: '', keyw
 
 const detailOpen = ref(false)
 const detail = ref<SessionDetail | null>(null)
+const viewMode = ref<'chat' | 'json'>('chat')
 const detailTitle = computed(() =>
   detail.value ? `会话 #${detail.value.session.id} · ${detail.value.session.title || '未命名会话'}` : '')
+
+const mergedMessages = computed<Array<Record<string, any>>>(() => {
+  const value = detail.value?.mergedRequest?.messages
+  return Array.isArray(value) ? value : []
+})
+
+const toolDefs = computed<Array<Record<string, any>>>(() => {
+  const value = detail.value?.mergedRequest?.tools
+  return Array.isArray(value) ? value : []
+})
+
+/**
+ * 请求体只包含「已经发给模型的内容」，最后一次回复是请求之后才生成的，不在里面。
+ * 这里补上平台记录的最后一条 assistant 回复，对话视图才不会在最后断掉。
+ */
+const trailingAnswer = computed<Record<string, any> | null>(() => {
+  const views = detail.value?.messages || []
+  const lastAssistant = [...views].reverse()
+    .find((view) => view.role === 'ASSISTANT' && String(view.content || '').trim())
+  if (!lastAssistant) return null
+  const lastInRequest = [...mergedMessages.value].reverse()
+    .find((message) => message.role === 'assistant' && contentText(message.content).trim())
+  if (lastInRequest
+      && contentText(lastInRequest.content).trim() === String(lastAssistant.content).trim()) {
+    return null
+  }
+  return lastAssistant
+})
 
 onMounted(async () => {
   await load()
@@ -258,6 +335,7 @@ async function openDetail(row: ObserveSessionRow) {
   try {
     const { data } = await http.get(`/api/agent/observe/sessions/${row.id}`)
     detail.value = data
+    viewMode.value = 'chat'
     detailOpen.value = true
   } catch (error) {
     ElMessage.error(errorText(error))
@@ -322,13 +400,48 @@ function fmt(value?: string) {
   return value ? String(value).slice(0, 19).replace('T', ' ') : '—'
 }
 
-/** 落库的请求体是 JSON 字符串，展示时格式化缩进；解析失败按原文显示。 */
-function pretty(requestJson?: string) {
-  if (!requestJson) return ''
+/**
+ * 展示值统一格式化：字符串若是 JSON（tool_calls.arguments 就是 JSON 串）就缩进展开，
+ * 其余对象直接序列化；解析失败按原文显示。
+ */
+function prettyValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return ''
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2)
+    } catch {
+      return value
+    }
+  }
   try {
-    return JSON.stringify(JSON.parse(requestJson), null, 2)
+    return JSON.stringify(value, null, 2)
   } catch {
-    return requestJson
+    return String(value)
+  }
+}
+
+/** 消息 content 可能是字符串，也可能是多模态块数组，统一压成可读文本。 */
+function contentText(content: unknown) {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part && typeof part === 'object' && 'text' in part
+        ? String((part as Record<string, any>).text) : JSON.stringify(part)))
+      .join('\n')
+  }
+  return content ? String(content) : ''
+}
+
+function roleTagType(role: unknown) {
+  switch (String(role || '')) {
+    case 'user':
+      return 'primary'
+    case 'assistant':
+      return 'success'
+    case 'tool':
+      return 'warning'
+    default:
+      return 'info'
   }
 }
 </script>
@@ -369,21 +482,72 @@ function pretty(requestJson?: string) {
   margin-top: 12px;
 }
 
-.call-item {
+.call-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.chat {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 10px;
 }
-.call-head {
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--bp-line);
+  border-radius: 8px;
+  background: #FCFCFD;
+}
+.chat-row.role-user { background: #F4F8FF; }
+.chat-row.role-assistant { background: #F6FBF7; }
+.chat-row.role-tool { background: #FFFBF2; }
+.chat-row.role-system { background: #F4F4F8; }
+.chat-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
-.call-model { font-size: 12px; color: var(--bp-muted); }
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-label {
+  font-size: 11px;
+  color: var(--bp-muted);
+  margin-bottom: 2px;
+}
+.chat-thinking {
+  padding: 6px 8px;
+  border-left: 2px solid #D9D9E3;
+  background: #FAFAFC;
+  border-radius: 4px;
+}
+.chat-tool {
+  padding: 6px 8px;
+  border-left: 2px solid #E6C77A;
+  background: #FFFDF7;
+  border-radius: 4px;
+}
+.chat-text {
+  margin: 0;
+  font-size: 12px;
+  font-family: Consolas, Monaco, monospace;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .call-json {
   margin: 0;
-  max-height: 320px;
+  max-height: 420px;
   overflow: auto;
   font-size: 11px;
   font-family: Consolas, Monaco, monospace;
