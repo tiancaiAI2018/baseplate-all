@@ -1,0 +1,19 @@
+id: cend
+display-name: C端页面
+version: 1.0.0
+requires: "baseplate-api >=1.0.0,<2.0.0"
+root-package: com.example.baseplate.cend
+enabled-by-default: true
+
+permissions:
+  - { code: "cend:view", label: 查看C端页面, type: MENU }
+  - { code: "cend:edit", label: 编辑C端页面, type: BUTTON }
+  - { code: "cend:publish", label: 发布C端页面, type: BUTTON }
+
+menus:
+  - { path: /cend/pages, label: C端页面, permission: "cend:view", icon: MagicStick }
+
+flyway-locations:
+  - classpath:db/migration/cend
+
+openapi-group: cend-v1

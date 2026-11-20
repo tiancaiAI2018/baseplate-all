@@ -5,13 +5,13 @@ requires: "baseplate-api >=1.0.0,<2.0.0"
 root-package: com.example.baseplate.metadata
 enabled-by-default: true
 
-permissions:
-  - { code: "meta:view", label: 查看低代码配置, type: MENU }
-  - { code: "meta:edit", label: 编辑低代码配置, type: BUTTON }
-  - { code: "meta:publish", label: 发布低代码配置, type: BUTTON }
+# permissions:
+#   - { code: "meta:view", label: 查看低代码配置, type: MENU }
+#   - { code: "meta:edit", label: 编辑低代码配置, type: BUTTON }
+#   - { code: "meta:publish", label: 发布低代码配置, type: BUTTON }
 
-menus:
-  - { path: /metadata/forms, label: 表单设计, permission: "meta:edit", icon: Grid }
+# menus:
+#   - { path: /metadata/forms, label: 表单设计, permission: "meta:edit", icon: Grid }
 
 config-keys:
   - baseplate.metadata.max-fields

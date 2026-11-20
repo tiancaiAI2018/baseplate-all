@@ -219,6 +219,7 @@ import AgentBpmnCard from './AgentBpmnCard.vue'
 import AgentInstanceProgress from './AgentInstanceProgress.vue'
 import InstanceDetailDrawer from '../InstanceDetailDrawer.vue'
 import { buildFormArtifacts, FIELD_NAME_PATTERN, normalizeAiFields } from './formRuleBuilder'
+import { normalizeAiPage, schemaOf } from '../cend/cendDsl'
 
 const route = useRoute()
 const router = useRouter()
@@ -323,6 +324,58 @@ registerAgentExternalTool('form_create_draft', async (args) => {
     return { ok: false, error: pickErrorDetail(error, '打开表单设计器失败') }
   }
 })
+/**
+ * 外部工具：AI 生成 C 端页面草稿并打开设计器。
+ * 模型只产出页面 DSL 参数，前端做白名单清洗后保存草稿；发布仍由用户确认。
+ */
+registerAgentExternalTool('cend_page_create_draft', async (args) => {
+  const pageCode = String(args.pageCode || '').trim()
+  if (!FIELD_NAME_PATTERN.test(pageCode)) {
+    return { ok: false, error: '页面编码必须以小写字母开头，只能包含小写字母、数字和下划线' }
+  }
+  const dsl = normalizeAiPage(args)
+  if (!dsl.blocks.length) {
+    return { ok: false, error: '区块列表为空，无法生成 C 端页面' }
+  }
+  try {
+    const { data } = await http.post(`/api/metadata/CEND_PAGE/${pageCode}`, {
+      name: args.name || pageCode,
+      schema: schemaOf(dsl),
+      uiSchema: dsl
+    })
+    router.push({
+      path: '/cend/pages/design',
+      query: { code: pageCode, v: String(Date.now()) }
+    })
+    return {
+      ok: true,
+      result: {
+        pageCode,
+        version: data.version,
+        blockCount: dsl.blocks.length,
+        message: '已在 C 端页面设计器打开草稿，等待用户确认或修改'
+      }
+    }
+  } catch (error: any) {
+    return { ok: false, error: pickErrorDetail(error, '打开 C 端页面设计器失败') }
+  }
+})
+
+/** 外部工具：读取当前 C 端页面设计器内容（含未保存修改）。 */
+registerAgentExternalTool('cend_page_get_canvas', async () => {
+  const snapshot = await readAgentCanvas('cend/pages/design')
+  if (!snapshot.available || !snapshot.data) {
+    return { ok: false, error: snapshot.error || '当前 C 端页面设计器不可用' }
+  }
+  return {
+    ok: true,
+    result: {
+      ...snapshot.data,
+      message: '已读取当前 C 端页面画布（含未保存修改）'
+    }
+  }
+})
+
 /**
  * 外部工具：读取当前流程设计器画布（含未保存修改）。
  * 画布实例由页面注册到 agentCanvas，助手不直接依赖 bpmn-js 实例。

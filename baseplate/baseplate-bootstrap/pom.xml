@@ -63,6 +63,11 @@
     </dependency>
     <dependency>
       <groupId>com.example.baseplate</groupId>
+      <artifactId>baseplate-cend-starter</artifactId>
+      <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+      <groupId>com.example.baseplate</groupId>
       <artifactId>baseplate-agent-workflow-starter</artifactId>
       <version>1.0.0-SNAPSHOT</version>
     </dependency>

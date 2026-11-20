@@ -41,6 +41,7 @@
     <module>baseplate-metadata-starter</module>
     <module>baseplate-agent-starter</module>
     <module>baseplate-agent-workflow-starter</module>
+    <module>baseplate-cend-starter</module>
     <module>baseplate-bootstrap</module>
   </modules>
 

@@ -16,7 +16,7 @@ import java.util.Set;
  */
 public final class MetadataService {
 
-    private static final Set<String> KINDS = Set.of("FORM", "LIST", "FLOW");
+    private static final Set<String> KINDS = Set.of("FORM", "LIST", "FLOW", "CEND_PAGE");
     private static final Set<String> FIELD_TYPES = Set.of(
             "STRING", "TEXT", "NUMBER", "MONEY", "DATE", "DATETIME", "BOOLEAN",
             "SELECT", "MULTI_SELECT", "USER", "ORG", "FILE", "RICH_TEXT");
@@ -78,7 +78,11 @@ public final class MetadataService {
                                 String schemaJson, String uiSchemaJson) {
         String tenant = currentUser.current().tenantId();
         String normalizedKind = normalizeKind(kind);
-        validateSchema(schemaJson);
+        if ("CEND_PAGE".equals(normalizedKind)) {
+            validateJson(schemaJson);
+        } else {
+            validateSchema(schemaJson);
+        }
         Integer next = jdbc.queryForObject("SELECT coalesce(max(version), 0) + 1 FROM meta_schema"
                         + " WHERE tenant_id = ? AND kind = ? AND code = ?",
                 Integer.class, tenant, normalizedKind, code);
@@ -119,6 +123,14 @@ public final class MetadataService {
             throw new IllegalArgumentException("元数据不存在：" + kind + "/" + code);
         }
         return latest(normalizedKind, code);
+    }
+
+    private void validateJson(String schemaJson) {
+        try {
+            objectMapper.readValue(schemaJson, Map.class);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Schema 不是合法 JSON");
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -170,7 +182,7 @@ public final class MetadataService {
     private String normalizeKind(String kind) {
         String normalized = kind == null ? "" : kind.toUpperCase();
         if (!KINDS.contains(normalized)) {
-            throw new IllegalArgumentException("kind 必须是 FORM / LIST / FLOW");
+            throw new IllegalArgumentException("kind 必须是 FORM / LIST / FLOW / CEND_PAGE");
         }
         return normalized;
     }

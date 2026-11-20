@@ -94,7 +94,8 @@ function Start-Backend {
         'classpath:db/migration/metadata',
         'classpath:db/migration/rule',
         'classpath:db/migration/workflow',
-        'classpath:db/migration/agent'
+        'classpath:db/migration/agent',
+        'classpath:db/migration/cend'
     ) -join ','
 
     Write-Host "Java    : $java" -ForegroundColor DarkGray

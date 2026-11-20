@@ -66,6 +66,9 @@
             <el-menu-item v-if="auth.has('wf:lab') || auth.isSuperAdmin" index="/workflow/lab">
               <el-icon><SetUp /></el-icon><template #title>流程演练</template>
             </el-menu-item>
+            <el-menu-item v-if="auth.has('cend:view') || auth.isSuperAdmin" index="/cend/pages">
+              <el-icon><MagicStick /></el-icon><template #title>C端页面</template>
+            </el-menu-item>
             <el-menu-item v-if="auth.has('agent:config:view') || auth.isSuperAdmin" index="/agent/config">
               <el-icon><MagicStick /></el-icon><template #title>智能体配置</template>
             </el-menu-item>

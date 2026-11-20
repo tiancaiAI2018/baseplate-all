@@ -11,6 +11,7 @@ const router = createRouter({
       meta: { title: '授权确认' }
     },
     { path: '/change-password', component: () => import('../views/ChangePasswordView.vue'), meta: { title: '修改密码' } },
+    { path: '/c/:code', component: () => import('../views/CendRendererView.vue'), meta: { public: true, title: 'C端页面' } },
     {
       path: '/',
       component: () => import('../layout/ConsoleLayout.vue'),
@@ -31,6 +32,8 @@ const router = createRouter({
         { path: 'workflow/forms', component: () => import('../views/FormListView.vue'), meta: { title: '流程表单' } },
         { path: 'workflow/forms/design', component: () => import('../views/FormDesignerView.vue'), meta: { title: '表单设计' } },
         { path: 'workflow/lab', component: () => import('../views/WorkflowLabView.vue'), meta: { title: '流程演练' } },
+        { path: 'cend/pages', component: () => import('../views/CendPageListView.vue'), meta: { title: 'C端页面' } },
+        { path: 'cend/pages/design', component: () => import('../views/CendPageDesignerView.vue'), meta: { title: 'C端页面设计' } },
         { path: 'agent/config', component: () => import('../views/AgentConfigView.vue'), meta: { title: '智能体配置' } },
         { path: 'agent/observe', component: () => import('../views/AgentObserveView.vue'), meta: { title: '智能体观测' } }
       ]

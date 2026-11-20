@@ -18,6 +18,7 @@ public class SecurityProperties {
     private String traceHeader = "X-Trace-Id";
     private List<String> permitPaths = new ArrayList<>(List.of(
             "/api/auth/login",
+            "/api/c/**",
             "/openapi/**",
             "/actuator/health",
             "/actuator/info",
