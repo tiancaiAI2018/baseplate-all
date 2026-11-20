@@ -66,6 +66,11 @@ public final class AgentEventMapper {
             ToolResultState state = e.getState();
             data.put("state", state == null ? "unknown" : state.getValue());
             data.put("ok", state == ToolResultState.SUCCESS);
+            if (e.getMetadata() != null
+                    && e.getMetadata().get(UiAwareToolResultConverter.UI_METADATA_KEY)
+                    instanceof Map<?, ?> ui) {
+                data.put(UiAwareToolResultConverter.UI_METADATA_KEY, ui);
+            }
             return new Mapped("tool_result", data);
         }
         return null;

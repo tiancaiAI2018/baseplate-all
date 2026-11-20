@@ -57,9 +57,6 @@
             <el-menu-item v-if="auth.has('rule:view') || auth.isSuperAdmin" index="/rule/config">
               <el-icon><SetUp /></el-icon><template #title>规则引擎</template>
             </el-menu-item>
-            <el-menu-item v-if="auth.has('meta:view') || auth.isSuperAdmin" index="/metadata/forms">
-              <el-icon><Grid /></el-icon><template #title>低代码配置</template>
-            </el-menu-item>
             <el-menu-item v-if="auth.has('wf:view') || auth.isSuperAdmin" index="/workflow/designer">
               <el-icon><Share /></el-icon><template #title>流程设计</template>
             </el-menu-item>
@@ -129,7 +126,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Odometer, User, Key, OfficeBuilding, Connection, Document,
-  SetUp, Grid, Share, Fold, Expand, ArrowDown, Files, Promotion, Bell, Tickets, MagicStick,
+  SetUp, Share, Fold, Expand, ArrowDown, Files, Promotion, Bell, Tickets, MagicStick,
   DataLine
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'

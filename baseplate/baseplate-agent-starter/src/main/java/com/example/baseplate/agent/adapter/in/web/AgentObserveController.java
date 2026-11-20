@@ -66,7 +66,7 @@ public class AgentObserveController {
 
     /**
      * 导出 JSON 文件。scope=all 不带筛选导出全租户；scope=filtered 按当前筛选条件导出。
-     * 每个会话：session 元数据 + calls（每次实际发给模型的 OpenAI 风格请求体）。
+     * 每个会话：session 元数据 + request（合并后的完整请求体，含最终回复，与页面 JSON 视图一致）。
      */
     @GetMapping("/export")
     public ResponseEntity<byte[]> export(

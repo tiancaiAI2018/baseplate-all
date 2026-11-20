@@ -151,15 +151,6 @@
                   </div>
                 </div>
               </div>
-              <div v-if="trailingAnswer" class="chat-row role-assistant">
-                <div class="chat-head">
-                  <el-tag size="small" effect="plain" type="success">assistant</el-tag>
-                  <span class="hint">本轮最终回复（请求之后生成，不在请求体中）</span>
-                </div>
-                <div class="chat-body">
-                  <pre class="chat-text">{{ trailingAnswer.content }}</pre>
-                </div>
-              </div>
             </div>
 
             <pre v-show="viewMode === 'json' && Object.keys(detail.mergedRequest || {}).length"
@@ -263,24 +254,6 @@ const mergedMessages = computed<Array<Record<string, any>>>(() => {
 const toolDefs = computed<Array<Record<string, any>>>(() => {
   const value = detail.value?.mergedRequest?.tools
   return Array.isArray(value) ? value : []
-})
-
-/**
- * 请求体只包含「已经发给模型的内容」，最后一次回复是请求之后才生成的，不在里面。
- * 这里补上平台记录的最后一条 assistant 回复，对话视图才不会在最后断掉。
- */
-const trailingAnswer = computed<Record<string, any> | null>(() => {
-  const views = detail.value?.messages || []
-  const lastAssistant = [...views].reverse()
-    .find((view) => view.role === 'ASSISTANT' && String(view.content || '').trim())
-  if (!lastAssistant) return null
-  const lastInRequest = [...mergedMessages.value].reverse()
-    .find((message) => message.role === 'assistant' && contentText(message.content).trim())
-  if (lastInRequest
-      && contentText(lastInRequest.content).trim() === String(lastAssistant.content).trim()) {
-    return null
-  }
-  return lastAssistant
 })
 
 onMounted(async () => {

@@ -512,7 +512,6 @@ const PAGE_OPTIONS = [
   { value: 'platform/apis', label: '接口目录' },
   { value: 'audit/logs', label: '审计日志' },
   { value: 'rule/config', label: '规则引擎' },
-  { value: 'metadata/forms', label: '低代码配置' },
   { value: 'workflow/start', label: '发起流程' },
   { value: 'workflow/todo', label: '我的待办' },
   { value: 'workflow/mine', label: '我发起的' },

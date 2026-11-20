@@ -17,6 +17,7 @@ import com.example.baseplate.agent.domain.ToolType;
 import com.example.baseplate.agent.runtime.AgentEventMapper;
 import com.example.baseplate.agent.runtime.AgentRuntimeFactory;
 import com.example.baseplate.agent.runtime.SseEventWriter;
+import com.example.baseplate.agent.runtime.UiAwareToolResultConverter;
 import com.example.baseplate.agent.tool.ToolDescriptor;
 import com.example.baseplate.agent.tool.ToolRegistry;
 import com.example.baseplate.api.exception.BaseplateException;
@@ -316,8 +317,8 @@ public final class AgentChatService {
                     } catch (RuntimeException ignored) {
                         // 客户端可能已断开
                     }
-                    persistAssistant(tenant, session, agent, answer, blocks,
-                            startedAt, firstTokenAt[0], "ERROR", error);
+                            persistAssistant(tenant, session, agent, context, answer, blocks,
+                                    startedAt, firstTokenAt[0], "ERROR", error);
                     sessions.touch(session.id(), 2, titleOf(title));
                     writer.complete();
                 },
@@ -328,8 +329,8 @@ public final class AgentChatService {
                     heartbeat.cancel(false);
                     long latency = System.currentTimeMillis() - startedAt;
                     boolean paused = approvalRef.get() != null || externalReplyRef.get() != null;
-                    long messageId = persistAssistant(tenant, session, agent, answer, blocks,
-                            startedAt, firstTokenAt[0], paused ? "PAUSED" : "OK", null);
+                            long messageId = persistAssistant(tenant, session, agent, context, answer, blocks,
+                                    startedAt, firstTokenAt[0], paused ? "PAUSED" : "OK", null);
                     sessions.touch(session.id(), 2, titleOf(title));
                     Map<String, Object> done = new LinkedHashMap<>();
                     done.put("sessionId", session.id());
@@ -772,10 +773,11 @@ public final class AgentChatService {
                 // 租户拼进 userId，避免不同租户的同名用户共用模型上下文
                 .userId(tenant + ":" + user.userId())
                 .sessionId(String.valueOf(session.id()))
-                .put("tenantId", tenant)
-                .put("pageKey", pageKey)
-                .put("principal", user)
-                .build();
+                    .put("tenantId", tenant)
+                    .put("pageKey", pageKey)
+                    .put("principal", user)
+                    .put(TokenMeter.CONTEXT_KEY, new TokenMeter())
+                    .build();
     }
 
     /**
@@ -869,12 +871,17 @@ public final class AgentChatService {
             return;
         }
         StringBuilder buffer = buffers.remove(callId);
-        if (buffer == null || buffer.isEmpty()) {
-            return;
-        }
-        Map<?, ?> parsed = parsePayload(buffer.toString());
-        if (parsed == null || !(parsed.get("ui") instanceof Map<?, ?> ui)) {
-            return;
+        Object direct = mapped.data().remove(UiAwareToolResultConverter.UI_METADATA_KEY);
+        Map<?, ?> ui = direct instanceof Map<?, ?> card ? card : null;
+        if (ui == null) {
+            if (buffer == null || buffer.isEmpty()) {
+                return;
+            }
+            Map<?, ?> parsed = parsePayload(buffer.toString());
+            if (parsed == null || !(parsed.get("ui") instanceof Map<?, ?> fallback)) {
+                return;
+            }
+            ui = fallback;
         }
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -910,6 +917,7 @@ public final class AgentChatService {
     }
 
     private long persistAssistant(String tenant, AgentSession session, AgentDefinition agent,
+                                  RuntimeContext context,
                                   StringBuilder answer, List<Map<String, Object>> blocks,
                                   long startedAt, long firstTokenAt,
                                   String status, Throwable error) {
@@ -928,7 +936,7 @@ public final class AgentChatService {
             long messageId = messages.append(tenant, session.id(), "ASSISTANT",
                     answer.toString(), mapper.writeValueAsString(snapshot), agent.modelName(),
                     (int) (System.currentTimeMillis() - startedAt));
-            recordRun(tenant, session.id(), messageId, agent,
+            recordRun(tenant, session.id(), messageId, agent, context,
                     System.currentTimeMillis() - startedAt, firstTokenAt, startedAt, status, error);
             return messageId;
         } catch (RuntimeException e) {
@@ -938,12 +946,16 @@ public final class AgentChatService {
     }
 
     private void recordRun(String tenant, long sessionId, long messageId, AgentDefinition agent,
-                           long latency, long firstTokenAt, long startedAt, String status,
-                           Throwable error) {
+                           RuntimeContext context, long latency, long firstTokenAt, long startedAt,
+                           String status, Throwable error) {
         try {
+            TokenMeter meter = context == null ? null : context.get(TokenMeter.CONTEXT_KEY);
             runs.record(new AgentRunRepository.RunRecord(
                     tenant, sessionId, messageId, null, agent.modelName(),
-                    0, 0, 0, 0, 0,
+                    meter == null ? 0 : meter.inputTokens(),
+                    meter == null ? 0 : meter.outputTokens(),
+                    meter == null ? 0 : meter.cachedTokens(),
+                    0, 0,
                     (int) latency,
                     firstTokenAt < 0 ? 0 : (int) (firstTokenAt - startedAt),
                     status,

@@ -12,6 +12,7 @@ import com.example.baseplate.api.model.WorkflowNodeConfig;
 import com.example.baseplate.api.model.WorkflowTaskDetail;
 import com.example.baseplate.api.model.WorkflowTaskTrace;
 import com.example.baseplate.api.port.out.ProcessEnginePort;
+import com.example.baseplate.agent.runtime.UiAwareToolResultConverter;
 import com.example.baseplate.workflow.application.WorkflowAccessService;
 import com.example.baseplate.workflow.application.WorkflowDraftService;
 import io.agentscope.core.agent.RuntimeContext;
@@ -100,6 +101,7 @@ public final class WorkflowAgentTools {
      * 模型与前端消费同一份结构。</p>
      */
     @Tool(name = "workflow_list_my_tasks",
+            converter = UiAwareToolResultConverter.class,
             description = "查询当前用户的待办任务，可返回多条。用户问「我有哪些待办」「有什么要我审批的」时先调用；"
                     + "要看某一单填了什么，再用 workflow_task_detail。办理本身不由 AI 执行，"
                     + "引导用户点卡片或待办页的「办理」按钮。")
@@ -191,6 +193,7 @@ public final class WorkflowAgentTools {
      * 「我发起的」，放大到部门范围会让模型把别人的单当成用户的单。</p>
      */
     @Tool(name = "workflow_list_my_started",
+            converter = UiAwareToolResultConverter.class,
             description = "查询我发起的流程实例。默认只看还没走完的（state=RUNNING），"
                     + "用户问历史单子时才传 FINISHED 或 ALL。返回 instanceId，"
                     + "要看具体走到哪一步再用 workflow_instance_progress。")
@@ -239,6 +242,7 @@ public final class WorkflowAgentTools {
      * 由模型追问，不猜。</p>
      */
     @Tool(name = "workflow_instance_progress",
+            converter = UiAwareToolResultConverter.class,
             description = "查询某个流程实例的办理进度：当前停在哪些节点、已经走过哪些节点、"
                     + "被谁打回过、每个任务的办理人和结论。用户问「我发起的那单走到哪了」"
                     + "「卡在谁那里」时使用。可以传 instanceId，也可以直接传业务单号 businessKey。"
@@ -339,6 +343,7 @@ public final class WorkflowAgentTools {
 
     /** 我的已办：我办理过的历史任务，按办结时间倒序。 */
     @Tool(name = "workflow_list_my_done",
+            converter = UiAwareToolResultConverter.class,
             description = "查询我的已办任务（我审批过的单子），带审批结论和意见。"
                     + "用户问「我审批过什么」「我上次怎么批的」时使用。")
     public String listMyDone(RuntimeContext ctx,
@@ -387,6 +392,7 @@ public final class WorkflowAgentTools {
 
     /** 个人工作台数字：待办、我发起且运行中、我发起且已结束、我的已办。 */
     @Tool(name = "workflow_my_summary",
+            converter = UiAwareToolResultConverter.class,
             description = "查询我的流程概览数字：待办数、我发起且未走完、我发起且已结束、我已办。"
                     + "用户问「我还有多少事没处理」「我最近提交了多少单」时使用。")
     public String mySummary(RuntimeContext ctx) {

@@ -11,6 +11,7 @@ import io.agentscope.core.message.ThinkingBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.model.ChatResponse;
+import io.agentscope.core.model.ChatUsage;
 import io.agentscope.core.model.GenerateOptions;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.model.ToolSchema;
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 模型调用观测：装饰 agentscope 的 {@link Model}，在每次真正发出 HTTP 请求前
@@ -82,8 +84,28 @@ public final class RecordingModel implements Model {
         // HITL / 外部工具恢复路径靠它拿到会话标识，不能退回只看 messages metadata。
         return Flux.deferContextual(contextView -> {
             recordAsync(messages, tools, options, contextView);
-            return delegate.stream(messages, tools, options);
+            Flux<ChatResponse> upstream = delegate.stream(messages, tools, options);
+            TokenMeter meter = resolveMeter(contextView);
+            if (meter == null) {
+                return upstream;
+            }
+            // 流式响应的 usage 只在最后一个 chunk 出现（stream_options.include_usage），
+            // 取最后一次而非逐 chunk 累加，避免个别厂商每个 chunk 都回传累计值。
+            AtomicReference<ChatUsage> lastUsage = new AtomicReference<>();
+            return upstream
+                    .doOnNext(response -> {
+                        if (response != null && response.getUsage() != null) {
+                            lastUsage.set(response.getUsage());
+                        }
+                    })
+                    .doOnComplete(() -> meter.add(lastUsage.get()));
         });
+    }
+
+    private TokenMeter resolveMeter(ContextView contextView) {
+        RuntimeContext runtimeContext = contextView.getOrDefault(
+                AgentBase.RUNTIME_CONTEXT_KEY, null);
+        return runtimeContext == null ? null : runtimeContext.get(TokenMeter.CONTEXT_KEY);
     }
 
     @Override

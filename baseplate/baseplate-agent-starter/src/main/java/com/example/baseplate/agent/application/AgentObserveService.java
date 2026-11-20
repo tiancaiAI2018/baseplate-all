@@ -11,6 +11,7 @@ import com.example.baseplate.api.exception.BaseplateException;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,13 +68,13 @@ public final class AgentObserveService {
     /**
      * 导出单元：一个会话的微调样本。
      *
-     * <p>calls 里每项就是一次发给模型 HTTP 接口的完整请求体（OpenAI 风格：
-     * model / messages / tools / 采样参数），messages[0] 是 skill 注入后的
-     * system prompt，tools 含 skill 自带工具；assistant 的 tool_calls 只有
-     * 入参、tool 消息只有出参，没有平台内部结构。</p>
+     * <p>request 是合并后的完整请求体（OpenAI 风格：model / messages / tools /
+     * 采样参数），与观测页 JSON 视图完全一致；messages[0] 是 skill 注入后的
+     * system prompt，末尾追加了本轮最终 assistant 回复。tools 含 skill 自带
+     * 工具；assistant 的 tool_calls 只有入参、tool 消息只有出参，没有平台内部结构。</p>
      */
     public record ExportedSession(ObserveSessionRow session,
-                                  List<Map<String, Object>> calls) {
+                                  Map<String, Object> request) {
     }
 
     /** 过滤下拉用的精简 Agent 选项，不暴露模型地址与密钥。 */
@@ -99,11 +100,12 @@ public final class AgentObserveService {
         // 只有请求体里的才是真正发出去的。没有记录时回退配置组装。
         String systemPrompt = calls.isEmpty()
                 ? "" : modelCalls.latestSystemPrompt(sessionId).orElse("");
+        List<AgentSessionService.MessageView> views = sessionService.messageViews(sessionId);
         return new SessionDetail(row, systemPrompt,
-                sessionService.messageViews(sessionId),
+                views,
                 runs.listBySession(sessionId),
                 calls,
-                mergeRequests(calls));
+                mergeRequests(calls, views));
     }
 
     /**
@@ -112,8 +114,12 @@ public final class AgentObserveService {
      * <p>请求体是累积的：第 N 次调用天然包含前 N-1 次的全部 messages，
      * 逐份展示会大段重复。这里取 messages 最长的那一份作为完整对话，
      * tools 只保留最近一次非空定义，采样参数取最新一次，页面因此只需渲染一遍。</p>
+     *
+     * <p>最后一次回复是请求之后才生成的，不在任何请求体里，这里从平台落库的
+     * 消息里补到末尾，使这份请求本身就是一次完整对话（观测视图与导出共用）。</p>
      */
-    private Map<String, Object> mergeRequests(List<ModelCallRow> calls) {
+    private Map<String, Object> mergeRequests(List<ModelCallRow> calls,
+                                              List<AgentSessionService.MessageView> views) {
         Map<String, Object> widest = null;
         Map<String, Object> toolsSource = null;
         int widestSize = -1;
@@ -138,7 +144,43 @@ public final class AgentObserveService {
         if (toolsSource != null && toolsSource != widest) {
             merged.put("tools", toolsSource.get("tools"));
         }
+        appendFinalAnswer(merged, views);
         return merged;
+    }
+
+    private void appendFinalAnswer(Map<String, Object> merged,
+                                   List<AgentSessionService.MessageView> views) {
+        AgentSessionService.MessageView last = null;
+        for (int i = views.size() - 1; i >= 0; i--) {
+            AgentSessionService.MessageView view = views.get(i);
+            if ("ASSISTANT".equalsIgnoreCase(view.role())
+                    && view.content() != null && !view.content().isBlank()) {
+                last = view;
+                break;
+            }
+        }
+        if (last == null) {
+            return;
+        }
+        List<Object> messages = merged.get("messages") instanceof List<?> list
+                ? new ArrayList<>(list) : new ArrayList<>();
+        if (!messages.isEmpty() && messages.get(messages.size() - 1) instanceof Map<?, ?> tail
+                && "assistant".equals(String.valueOf(tail.get("role")))
+                && last.content().equals(text(tail.get("content")))) {
+            return;
+        }
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("role", "assistant");
+        answer.put("content", last.content());
+        messages.add(answer);
+        merged.put("messages", messages);
+    }
+
+    private static String text(Object content) {
+        if (content == null) {
+            return "";
+        }
+        return content instanceof String value ? value : String.valueOf(content);
     }
 
     @SuppressWarnings("unchecked")
@@ -153,34 +195,25 @@ public final class AgentObserveService {
         }
     }
 
-    /** 导出：按筛选条件批量取会话，每会话附全部模型调用请求体（原样）。 */
+    /** 导出：按筛选条件批量取会话，每会话附合并后的完整请求体（含最终回复）。 */
     public List<ExportedSession> exportSessions(String tenant, SessionFilter filter, int limit) {
         int size = Math.max(1, Math.min(limit <= 0 ? 200 : limit, MAX_EXPORT_LIMIT));
         List<ObserveSessionRow> rows = observe.listSessions(tenant, filter.agentId(),
                 filter.userId(), filter.keyword(), size, 0).items();
         return rows.stream()
-                .map(row -> new ExportedSession(row, requestsOf(row.id())))
+                .map(row -> new ExportedSession(row, requestOf(row.id())))
                 .toList();
     }
 
     public ExportedSession exportSession(String tenant, long sessionId) {
         ObserveSessionRow row = observe.findSession(tenant, sessionId)
                 .orElseThrow(() -> new BaseplateException("NOT_FOUND", "会话不存在"));
-        return new ExportedSession(row, requestsOf(sessionId));
+        return new ExportedSession(row, requestOf(sessionId));
     }
 
-    /** 把落库的请求体 JSON 反序列化回 Map，导出时保持字段原样。 */
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> requestsOf(long sessionId) {
-        return modelCalls.listBySession(sessionId).stream()
-                .map(call -> {
-                    try {
-                        return (Map<String, Object>) mapper.readValue(call.requestJson(), Map.class);
-                    } catch (RuntimeException e) {
-                        return Map.<String, Object>of("raw", call.requestJson());
-                    }
-                })
-                .toList();
+    private Map<String, Object> requestOf(long sessionId) {
+        return mergeRequests(modelCalls.listBySession(sessionId),
+                sessionService.messageViews(sessionId));
     }
 
     public List<AgentOption> agentOptions(String tenant) {

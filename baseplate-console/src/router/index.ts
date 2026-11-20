@@ -24,7 +24,6 @@ const router = createRouter({
         { path: 'platform/apis', component: () => import('../views/ApiCatalogView.vue'), meta: { title: '接口目录' } },
         { path: 'audit/logs', component: () => import('../views/AuditView.vue'), meta: { title: '审计日志' } },
         { path: 'rule/config', component: () => import('../views/RulesView.vue'), meta: { title: '规则引擎' } },
-        { path: 'metadata/forms', component: () => import('../views/MetadataView.vue'), meta: { title: '低代码配置' } },
         { path: 'workflow/start', component: () => import('../views/ProcessStartView.vue'), meta: { title: '发起流程' } },
         { path: 'workflow/todo', component: () => import('../views/MyTodoView.vue'), meta: { title: '我的待办' } },
         { path: 'workflow/mine', component: () => import('../views/MyInstancesView.vue'), meta: { title: '我发起的' } },
