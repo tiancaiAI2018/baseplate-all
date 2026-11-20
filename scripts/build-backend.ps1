@@ -1,4 +1,4 @@
-﻿﻿<#
+﻿﻿﻿﻿<#
   后端编译脚本：clean package 生成可直接启动的 baseplate-bootstrap fat jar。
 
   用法：
