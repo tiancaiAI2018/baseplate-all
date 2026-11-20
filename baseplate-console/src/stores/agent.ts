@@ -44,6 +44,10 @@ export interface AgentChatMessage {
   content: string
   blocks: AgentChatBlock[]
   streaming?: boolean
+  /** 后端落库后的消息 id：done 事件回传，历史回放来自列表；评分需要它 */
+  id?: number
+  /** 用户评分：USEFUL / NOT_USEFUL，null 表示未评 */
+  feedback?: 'USEFUL' | 'NOT_USEFUL' | null
 }
 
 export interface AgentSessionItem {
@@ -134,9 +138,11 @@ export const useAgentStore = defineStore('agent', {
       const { data } = await http.get(`/api/agent/sessions/${sessionId}/messages`)
       this.sessionId = sessionId
       this.messages = (data as any[]).map((row) => ({
+        id: row.id,
         role: row.role,
         content: row.content || '',
-        blocks: Array.isArray(row.blocks) ? row.blocks : []
+        blocks: Array.isArray(row.blocks) ? row.blocks : [],
+        feedback: row.feedback || null
       }))
       // 刷新后把仍待确认的 HITL 找回来，否则审批卡会消失、对话无法继续
       try {
@@ -435,6 +441,8 @@ export const useAgentStore = defineStore('agent', {
             this.controller?.abort()
             this.controller = null
           }
+          // 落库后的消息 id：后续评分要用
+          if (event.messageId) assistant.id = Number(event.messageId)
           break
         default:
           break
@@ -449,6 +457,22 @@ export const useAgentStore = defineStore('agent', {
         return
       }
       message.blocks.push({ type, text: delta })
+    },
+
+    /**
+     * 给助手回复打分。点已选中的评分=取消；改选会覆盖。
+     * 失败时静默恢复原状态，不打断对话。
+     */
+    async rateMessage(message: AgentChatMessage, rating: 'USEFUL' | 'NOT_USEFUL') {
+      if (!message.id) return
+      const previous = message.feedback || null
+      const next = previous === rating ? null : rating
+      message.feedback = next
+      try {
+        await http.post(`/api/agent/sessions/messages/${message.id}/feedback`, { rating: next })
+      } catch {
+        message.feedback = previous
+      }
     }
   }
 })

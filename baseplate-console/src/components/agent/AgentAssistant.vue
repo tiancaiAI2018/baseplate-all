@@ -160,6 +160,17 @@
                             type="error" :closable="false" />
                 </div>
                 <div v-if="message.streaming && !message.content" class="typing">正在思考…</div>
+                <!-- 评分：只在回复结束且已落库（有 id）时出现；点同一项=取消 -->
+                <div v-if="message.role === 'ASSISTANT' && !message.streaming && message.id"
+                     class="rate-row">
+                  <span class="rate-label">这条回复有帮助吗？</span>
+                  <button class="rate-btn" :class="{ active: message.feedback === 'USEFUL' }"
+                          title="有用"
+                          @click="agent.rateMessage(message, 'USEFUL')">👍</button>
+                  <button class="rate-btn" :class="{ active: message.feedback === 'NOT_USEFUL' }"
+                          title="没用"
+                          @click="agent.rateMessage(message, 'NOT_USEFUL')">👎</button>
+                </div>
               </template>
             </div>
           </div>
@@ -827,6 +838,36 @@ function externalStatusText(status?: string) {
 @keyframes blink {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+
+/* 回复评分：默认弱化展示，悬停/选中才亮，避免干扰对话流 */
+.rate-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.rate-label {
+  font-size: 11px;
+  color: var(--bp-muted);
+}
+.rate-btn {
+  border: 1px solid var(--bp-line);
+  background: transparent;
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.55;
+  line-height: 1.5;
+}
+.rate-btn:hover {
+  opacity: 1;
+}
+.rate-btn.active {
+  opacity: 1;
+  border-color: #6C9FE8;
+  background: #EDF3FC;
 }
 
 .error-bar {

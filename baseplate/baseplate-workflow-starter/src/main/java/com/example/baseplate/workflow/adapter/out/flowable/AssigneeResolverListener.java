@@ -1,7 +1,8 @@
-package com.example.baseplate.workflow.application;
+package com.example.baseplate.workflow.adapter.out.flowable;
 
 import com.example.baseplate.api.model.WorkflowNodeConfig;
 import com.example.baseplate.workflow.adapter.out.persistence.WorkflowConfigRepository;
+import com.example.baseplate.workflow.application.AssigneeResolver;
 import org.flowable.engine.RepositoryService;
 import org.flowable.task.service.delegate.DelegateTask;
 import org.flowable.task.service.delegate.TaskListener;

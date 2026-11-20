@@ -34,7 +34,6 @@ import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ToolCallState;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
-import io.agentscope.core.message.UserMessage;
 import io.agentscope.core.permission.PermissionContextState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -155,7 +154,7 @@ public final class AgentChatService {
             RuntimeContext context = context(tenant, user, session, command.pageKey());
             syncPermissionPolicy(runtime, context, selection.policies());
             runTurn(tenant, user, session, agent, emitter, writer, runtime, context,
-                    List.of(new UserMessage(command.message())), command.message(),
+                    List.of(userMessage(tenant, session, command.message())), command.message(),
                     new ArrayList<>(), new StringBuilder(), System.currentTimeMillis());
         } catch (RuntimeException e) {
             log.warn("智能体启动失败 sessionId={}: {}", session.id(), e.toString());
@@ -197,6 +196,7 @@ public final class AgentChatService {
                 .toList();
         Map<String, Object> metadata = new HashMap<>();
         metadata.put(Msg.METADATA_CONFIRM_RESULTS, confirmResults);
+        metadata.putAll(traceMetadata(tenant, session));
         Msg resumeMessage = Msg.builder()
                 .name(user.userId())
                 .role(MsgRole.USER)
@@ -515,6 +515,7 @@ public final class AgentChatService {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put(Msg.METADATA_EXTERNAL_EXECUTION_REQUEST_REPLY_ID,
                 pending.replyId() == null ? "" : pending.replyId());
+        metadata.putAll(traceMetadata(tenant, session));
         Msg resumeMessage = Msg.builder()
                 .name(user.userId())
                 // 携带 ToolResultBlock 的恢复消息必须是 TOOL 角色；
@@ -775,6 +776,27 @@ public final class AgentChatService {
                 .put("pageKey", pageKey)
                 .put("principal", user)
                 .build();
+    }
+
+    /**
+     * 用户输入消息 + 观测 trace metadata。
+     *
+     * <p>RecordingModel 从 metadata 里拿 sessionId/tenantId 落库模型调用请求体：
+     * agentscope 2.0.4 的 middleware onModelCall 未接线，Model.stream 又拿不到
+     * RuntimeContext，metadata 是唯一可靠的会话关联通道。</p>
+     */
+    private Msg userMessage(String tenant, AgentSession session, String text) {
+        return Msg.builder()
+                .role(MsgRole.USER)
+                .textContent(text)
+                .metadata(traceMetadata(tenant, session))
+                .build();
+    }
+
+    private Map<String, Object> traceMetadata(String tenant, AgentSession session) {
+        return Map.of(
+                RecordingModel.META_TENANT_ID, tenant,
+                RecordingModel.META_SESSION_ID, session.id());
     }
 
     // ==================== 落库与观测 ====================

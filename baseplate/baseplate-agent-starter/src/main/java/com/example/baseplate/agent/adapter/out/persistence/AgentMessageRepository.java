@@ -25,7 +25,8 @@ public final class AgentMessageRepository {
             rs.getString("blocks"),
             rs.getString("model"),
             rs.getInt("latency_ms"),
-            rs.getObject("created_at", OffsetDateTime.class));
+            rs.getObject("created_at", OffsetDateTime.class),
+            rs.getString("feedback"));
 
     public long append(String tenant, long sessionId, String role, String content,
                        String blocksJson, String model, int latencyMs) {
@@ -45,5 +46,23 @@ public final class AgentMessageRepository {
                  WHERE session_id = ?
                  ORDER BY seq
                 """, MAPPER, sessionId);
+    }
+
+    /**
+     * 给自己的助手回复打分；rating 为 null 表示清除评分。
+     * 通过 join agent_session 限制只能评自己会话里的 ASSISTANT 消息，返回是否真的更新了。
+     */
+    public boolean setFeedback(String tenant, String userId, long messageId, String rating) {
+        return jdbc.update("""
+                UPDATE agent_message m
+                   SET feedback = ?, feedback_at = CASE WHEN ?::varchar IS NULL THEN NULL ELSE now() END
+                  FROM agent_session s
+                 WHERE m.session_id = s.id
+                   AND m.id = ?
+                   AND s.tenant_id = ?
+                   AND s.user_id = ?
+                   AND s.deleted = FALSE
+                   AND m.role = 'ASSISTANT'
+                """, rating, rating, messageId, tenant, userId) > 0;
     }
 }

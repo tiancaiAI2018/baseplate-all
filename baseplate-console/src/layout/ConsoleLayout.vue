@@ -72,6 +72,9 @@
             <el-menu-item v-if="auth.has('agent:config:view') || auth.isSuperAdmin" index="/agent/config">
               <el-icon><MagicStick /></el-icon><template #title>智能体配置</template>
             </el-menu-item>
+            <el-menu-item v-if="auth.has('agent:metrics:view') || auth.isSuperAdmin" index="/agent/observe">
+              <el-icon><DataLine /></el-icon><template #title>智能体观测</template>
+            </el-menu-item>
           </el-menu-item-group>
         </el-menu>
       </div>
@@ -126,7 +129,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Odometer, User, Key, OfficeBuilding, Connection, Document,
-  SetUp, Grid, Share, Fold, Expand, ArrowDown, Files, Promotion, Bell, Tickets, MagicStick
+  SetUp, Grid, Share, Fold, Expand, ArrowDown, Files, Promotion, Bell, Tickets, MagicStick,
+  DataLine
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { useWorkflowStore } from '../stores/workflow'

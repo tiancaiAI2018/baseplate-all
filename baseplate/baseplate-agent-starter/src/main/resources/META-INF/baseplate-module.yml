@@ -11,10 +11,11 @@ permissions:
   - { code: "agent:config:edit", label: 编辑智能体配置, type: BUTTON }
   - { code: "agent:session:view", label: 查看会话记录, type: BUTTON }
   - { code: "agent:session:view:all", label: 查看全部会话记录, type: BUTTON }
-  - { code: "agent:metrics:view", label: 查看智能体观测, type: BUTTON }
+  - { code: "agent:metrics:view", label: 查看智能体观测, type: MENU }
 
 menus:
   - { path: /agent/config, label: 智能体配置, permission: "agent:config:view", icon: MagicStick }
+  - { path: /agent/observe, label: 智能体观测, permission: "agent:metrics:view", icon: DataLine }
 
 config-keys:
   - baseplate.agent.default-model

@@ -1,6 +1,8 @@
 package com.example.baseplate.agent.runtime;
 
 import com.example.baseplate.agent.adapter.out.persistence.AgentDefinitionRepository;
+import com.example.baseplate.agent.adapter.out.persistence.AgentModelCallRepository;
+import com.example.baseplate.agent.application.RecordingModel;
 import com.example.baseplate.agent.application.SkillIndexService;
 import com.example.baseplate.agent.config.AgentProperties;
 import com.example.baseplate.agent.domain.AgentDefinition;
@@ -52,18 +54,21 @@ public final class AgentRuntimeFactory {
     private final AgentStateStore stateStore;
     private final SkillIndexService skillIndexService;
     private final AgentDefinitionRepository definitionRepository;
+    private final AgentModelCallRepository modelCallRepository;
     private final Map<String, ReActAgent> cache = new ConcurrentHashMap<>();
 
     public AgentRuntimeFactory(ToolRegistry toolRegistry, ModelProviderFactory modelFactory,
                                AgentProperties properties, AgentStateStore stateStore,
                                SkillIndexService skillIndexService,
-                               AgentDefinitionRepository definitionRepository) {
+                               AgentDefinitionRepository definitionRepository,
+                               AgentModelCallRepository modelCallRepository) {
         this.toolRegistry = toolRegistry;
         this.modelFactory = modelFactory;
         this.properties = properties;
         this.stateStore = stateStore;
         this.skillIndexService = skillIndexService;
         this.definitionRepository = definitionRepository;
+        this.modelCallRepository = modelCallRepository;
     }
 
     public ReActAgent get(String tenant, AgentDefinition definition,
@@ -150,7 +155,9 @@ public final class AgentRuntimeFactory {
         ReActAgent.Builder builder = ReActAgent.builder()
                 .name("baseplate-" + definition.agentCode())
                 .sysPrompt(systemPrompt(definition))
-                .model(modelFactory.build(definition))
+                // 观测：装饰 Model 拦截实际发给模型 HTTP 接口的请求体
+                //（2.0.4 的 middleware onModelCall 未接线，Model.stream 是唯一必经点）
+                .model(new RecordingModel(modelFactory.build(definition), modelCallRepository))
                 .toolkit(toolkit)
                 .maxIters(properties.getMaxIters())
                 .stateStore(stateStore);
@@ -217,8 +224,11 @@ public final class AgentRuntimeFactory {
      *
      * <p>不拼接 pageKey、可用工具列表这类每轮可能变化的信息：系统提示词是请求的固定前缀，
      * 前缀不稳定就无法命中厂商侧的 prompt 缓存。页面范围只在入口校验，不进入提示词。</p>
+     *
+     * <p>public 供观测模块复用：详情回放与导出要展示「实际发送给模型的 system prompt」，
+     * 而不是数据库里的原始配置，两边口径必须一致。</p>
      */
-    private String systemPrompt(AgentDefinition definition) {
+    public String systemPrompt(AgentDefinition definition) {
         String base = definition.systemPrompt() == null || definition.systemPrompt().isBlank()
                 ? DEFAULT_SYSTEM_PROMPT : definition.systemPrompt();
         return base + "\n\n[运行规则]\n工具返回失败时必须如实告知用户失败原因，绝不能声称成功。";

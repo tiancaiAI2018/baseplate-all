@@ -32,7 +32,8 @@ const router = createRouter({
         { path: 'workflow/forms', component: () => import('../views/FormListView.vue'), meta: { title: '流程表单' } },
         { path: 'workflow/forms/design', component: () => import('../views/FormDesignerView.vue'), meta: { title: '表单设计' } },
         { path: 'workflow/lab', component: () => import('../views/WorkflowLabView.vue'), meta: { title: '流程演练' } },
-        { path: 'agent/config', component: () => import('../views/AgentConfigView.vue'), meta: { title: '智能体配置' } }
+        { path: 'agent/config', component: () => import('../views/AgentConfigView.vue'), meta: { title: '智能体配置' } },
+        { path: 'agent/observe', component: () => import('../views/AgentObserveView.vue'), meta: { title: '智能体观测' } }
       ]
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' }

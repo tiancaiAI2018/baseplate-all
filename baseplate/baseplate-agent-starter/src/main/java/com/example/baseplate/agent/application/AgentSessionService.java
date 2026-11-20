@@ -2,7 +2,6 @@ package com.example.baseplate.agent.application;
 
 import com.example.baseplate.agent.adapter.out.persistence.AgentMessageRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentSessionRepository;
-import com.example.baseplate.agent.domain.AgentMessage;
 import com.example.baseplate.agent.domain.AgentSession;
 import com.example.baseplate.api.exception.BaseplateException;
 import com.example.baseplate.api.exception.ForbiddenException;
@@ -27,7 +26,7 @@ public final class AgentSessionService {
     }
 
     public record MessageView(long id, int seq, String role, String content, Object blocks,
-                              String model, int latencyMs, Object createdAt) {
+                              String model, int latencyMs, Object createdAt, String feedback) {
     }
 
     public List<AgentSession> list(String tenant, CurrentUser user, boolean all, int limit) {
@@ -49,10 +48,28 @@ public final class AgentSessionService {
         if (session == null) {
             throw new BaseplateException("NOT_FOUND", "会话不存在");
         }
-        List<AgentMessage> rows = messages.list(sessionId);
-        return rows.stream().map(row -> new MessageView(
+        return messageViews(sessionId);
+    }
+
+    /** 供观测等可信调用方复用：不做权限判断，调用方自行保证越权校验。 */
+    List<MessageView> messageViews(long sessionId) {
+        return messages.list(sessionId).stream().map(row -> new MessageView(
                 row.id(), row.seq(), row.role(), row.content(),
-                parseBlocks(row.blocksJson()), row.model(), row.latencyMs(), row.createdAt())).toList();
+                parseBlocks(row.blocksJson()), row.model(), row.latencyMs(), row.createdAt(),
+                row.feedback())).toList();
+    }
+
+    /**
+     * 用户对助手回复打分。rating 只允许 USEFUL / NOT_USEFUL，传 null 清除评分；
+     * 更新不到（不是自己的消息 / 不是助手消息）按不存在处理。
+     */
+    public void rate(String tenant, CurrentUser user, long messageId, String rating) {
+        if (rating != null && !"USEFUL".equals(rating) && !"NOT_USEFUL".equals(rating)) {
+            throw new BaseplateException("BAD_REQUEST", "评分只支持 USEFUL / NOT_USEFUL");
+        }
+        if (!messages.setFeedback(tenant, user.userId(), messageId, rating)) {
+            throw new BaseplateException("NOT_FOUND", "消息不存在或不可评分");
+        }
     }
 
     public void delete(String tenant, CurrentUser user, long sessionId) {

@@ -4,11 +4,14 @@ import com.example.baseplate.agent.adapter.out.persistence.AgentDefinitionReposi
 import com.example.baseplate.agent.adapter.out.persistence.AgentExternalCallRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentHitlRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentMessageRepository;
+import com.example.baseplate.agent.adapter.out.persistence.AgentModelCallRepository;
+import com.example.baseplate.agent.adapter.out.persistence.AgentObserveRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentRunRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentSessionRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentSkillIndexRepository;
 import com.example.baseplate.agent.application.AgentChatService;
 import com.example.baseplate.agent.application.AgentConfigService;
+import com.example.baseplate.agent.application.AgentObserveService;
 import com.example.baseplate.agent.application.AgentSessionService;
 import com.example.baseplate.agent.application.SkillIndexService;
 import com.example.baseplate.agent.config.AgentProperties;
@@ -92,6 +95,18 @@ public class AgentAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public AgentObserveRepository agentObserveRepository(JdbcTemplate jdbcTemplate) {
+        return new AgentObserveRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AgentModelCallRepository agentModelCallRepository(JdbcTemplate jdbcTemplate) {
+        return new AgentModelCallRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public SkillIndexService agentSkillIndexService(AgentSkillIndexRepository repository,
                                                     AgentProperties properties) {
         return new SkillIndexService(repository, properties);
@@ -131,9 +146,10 @@ public class AgentAutoConfiguration {
                                                    AgentProperties properties,
                                                    AgentStateStore agentStateStore,
                                                    SkillIndexService skillIndexService,
-                                                   AgentDefinitionRepository definitionRepository) {
+                                                   AgentDefinitionRepository definitionRepository,
+                                                   AgentModelCallRepository modelCallRepository) {
         return new AgentRuntimeFactory(toolRegistry, modelProviderFactory, properties,
-                agentStateStore, skillIndexService, definitionRepository);
+                agentStateStore, skillIndexService, definitionRepository, modelCallRepository);
     }
 
     @Bean
@@ -152,6 +168,17 @@ public class AgentAutoConfiguration {
     public AgentSessionService agentSessionService(AgentSessionRepository sessionRepository,
                                                    AgentMessageRepository messageRepository) {
         return new AgentSessionService(sessionRepository, messageRepository);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AgentObserveService agentObserveService(AgentObserveRepository observeRepository,
+                                                   AgentDefinitionRepository definitionRepository,
+                                                   AgentSessionService sessionService,
+                                                   AgentRunRepository runRepository,
+                                                   AgentModelCallRepository modelCallRepository) {
+        return new AgentObserveService(observeRepository, definitionRepository, sessionService,
+                runRepository, modelCallRepository);
     }
 
     @Bean
