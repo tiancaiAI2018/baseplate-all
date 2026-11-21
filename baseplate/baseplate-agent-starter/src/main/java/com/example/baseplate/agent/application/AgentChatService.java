@@ -428,7 +428,8 @@ public final class AgentChatService {
      */
     private void syncPermissionPolicy(ReActAgent runtime, RuntimeContext context,
                                       Map<String, ApprovalMode> policies) {
-        PermissionContextState desired = AgentRuntimeFactory.permissionContext(policies);
+        PermissionContextState desired = AgentRuntimeFactory.permissionContext(
+                AgentRuntimeFactory.entryPolicies(policies, properties.getToolExposureMode()));
         String userId = context.getUserId();
         String sessionId = context.getSessionId();
         PermissionContextState current =

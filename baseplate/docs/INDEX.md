@@ -197,7 +197,7 @@ baseplate/                                  ← 后端根（Maven 多模块）
 │   │                                          AgentSessionService / SkillIndexService
 │   ├── runtime/                            ← AgentRuntimeFactory / AgentEventMapper / SseEventWriter
 │   ├── model/                              ← ModelProviderFactory（OpenAI 兼容端点）
-│   ├── tool/                               ← ToolRegistry / ToolDescriptor / PlatformTools / HttpApiTool
+│   ├── tool/                               ← ToolRegistry / ToolDescriptor / ToolDirectory / ToolCliTool / ToolMetaTool
 │   ├── adapter/in/web/                     ← Chat / Config / Session / Hitl / ExternalCall /
 │   │                                          Skill / ToolDirectory 七组控制器
 │   ├── adapter/out/persistence/            ← 定义/会话/消息/审批/外部调用/技能索引仓储

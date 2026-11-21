@@ -18,7 +18,7 @@ agentscope-core 2.0.4 · Vue 3 + Vite + Element Plus + bpmn-js
 | REST 方法映射 | 137 |
 | 数据库表 | 约 95（Flowable `act_*` 56 + 基盘迁移建表 39） |
 | Flyway 迁移 | 21 条，最新 `20261118170000` |
-| 智能体内置工具 | 14 个（工作流 8 / 表单 4 / 平台 2） |
+| 智能体内置工具 | 28 个（工作流 10 / 表单 4 / C 端 11 / 平台 2 + 入口 1~3），模型侧常驻默认仅 `baseplate` |
 | 控制台 Vue 视图 | 22（含节点属性面板、表单渲染等组件） |
 
 详细证据见 [`../../Baseplate基盘_实现与验证报告.html`](../../Baseplate基盘_实现与验证报告.html)（含缺陷清单与未完成项）。
@@ -92,22 +92,25 @@ npm run dev        # http://127.0.0.1:5173，/api 由 Vite 代理到 8080
 
 | 类型 | 执行位置 | 例子 | 权限 |
 |---|---|---|---|
+| 统一入口 | 服务端 | `baseplate`（`find` / `show` / `call`） | 目录按 Agent 绑定、页面、用户权限过滤；执行期再校验 |
 | 内部工具 | 服务端 | `workflow_list_my_tasks`、`workflow_list_my_started`、`workflow_instance_progress`、`workflow_list_my_done`、`workflow_my_summary`、`workflow_task_detail`、`form_get_draft`、`platform_whoami` | 工具代码里按用户权限点校验 |
 | 外部工具 | 浏览器 | `workflow_get_canvas`、`workflow_create_draft`、`form_get_canvas`、`form_create_draft` | 前端带用户令牌调用业务接口，复用 HTTP 权限与审计 |
 
 关键设计：
 
+- **工具按需加载**：`baseplate.agent.tool-exposure-mode` 三选一，互斥不叠加——`cli`（默认，只常驻 `baseplate`，`find`/`show`/`call`）、`meta`（常驻 `tool_search`/`tool_describe`/`tool_call`）、`direct`（全量直挂，排障用）。数据库里新增的工具自动纳入目录，不需要改代码；外部工具和 `ASK` 工具始终直接暴露，前者必须由浏览器执行，后者必须触发审批
 - **AI 不代签**：同意/驳回/打回不再提供工具，办理由用户在办理抽屉确认；只有必须打开浏览器的创建草稿做成外部工具，`@RequiresPermission`、`@AuditLog` 照常生效
 - **页面作用域**：工具声明 `pages`，运行时不匹配当前 `pageKey` 的 schema 不会进模型上下文；会话继续时同步 `session.page_key`，避免恢复流报 `Tool not found`
 - **HITL**：审批策略为 `ASK` 的工具先落审批单，用户同意后带 `ConfirmResult` 恢复同一会话
 - **外部工具结果回传**：前端执行完调用 `/api/agent/external-calls/{callId}/result`，服务端恢复 SSE；多个调用按 `replyId` 收齐后再恢复
 - **UI 卡片**：工具结果可带 `ui: { kind: "task_list" | "workflow_preview", ... }`，服务端转成独立 `ui` 事件，前端渲染任务卡片 / bpmn-js 流程图缩略图；`ui` 会从模型上下文剔除
-- **技能（Skill）**：`baseplate/skills/<名称>/SKILL.md` 由 `SkillIndexService` 扫描、建索引，可在控制台在线编辑 / zip 导入 / 按 Agent 绑定
+- **技能（Skill）**：`baseplate/skills/<名称>/SKILL.md` 由 `SkillIndexService` 扫描、建索引，可在控制台在线编辑 / zip 导入 / 按 Agent 绑定；收敛模式自带「工具检索」/「工具元调用」两个入口技能，由 `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL`（默认 `true`）控制是否把技能正文内置进 system prompt 并挂载，`false` 时只保留简短调用规则
 
 默认内置工具：
 
 | 分组 | 工具 |
 |---|---|
+| 统一入口 | `baseplate`（`find` 检索 / `show` 查看参数 / `call` 执行） |
 | 工作流（个人） | `workflow_list_my_tasks`、`workflow_task_detail`、`workflow_list_my_started`、`workflow_instance_progress`、`workflow_list_my_done`、`workflow_my_summary` |
 | 工作流（设计） | `workflow_list_definitions`、`workflow_get_draft`、`workflow_create_draft`、`workflow_get_canvas` |
 | 表单 | `form_list_definitions`、`form_get_draft`、`form_get_canvas`、`form_create_draft` |

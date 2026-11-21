@@ -18,6 +18,10 @@ public class AgentProperties {
 
     /** 单轮 ReAct 最多循环次数；超过即停止，避免模型无限调用工具。 */
     private int maxIters = 4;
+    /** 内部工具暴露方式（DIRECT / CLI / META），三者互斥，默认 CLI。 */
+    private ToolExposureMode toolExposureMode = ToolExposureMode.CLI;
+    /** 收敛模式下是否自动挂载入口技能（教模型如何使用 find/show/call 或元工具）。 */
+    private boolean toolExposureSkill = true;
     /** 整条 SSE 流的最长等待时间（秒），与 SseEmitter 超时同源。 */
     private long streamTimeoutSeconds = 120;
     /** HITL 审批单有效期（秒）；过期后必须重新发起对话。 */
@@ -65,6 +69,22 @@ public class AgentProperties {
 
     public void setMaxIters(int maxIters) {
         this.maxIters = maxIters;
+    }
+
+    public ToolExposureMode getToolExposureMode() {
+        return toolExposureMode;
+    }
+
+    public void setToolExposureMode(ToolExposureMode toolExposureMode) {
+        this.toolExposureMode = toolExposureMode;
+    }
+
+    public boolean isToolExposureSkill() {
+        return toolExposureSkill;
+    }
+
+    public void setToolExposureSkill(boolean toolExposureSkill) {
+        this.toolExposureSkill = toolExposureSkill;
     }
 
     public long getStreamTimeoutSeconds() {

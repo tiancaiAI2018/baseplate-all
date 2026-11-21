@@ -190,6 +190,12 @@ rule-fields:
 `ToolRegistry` 在 Bean 构造期就收集全部 `AgentToolProvider`，工具编码重复会直接启动失败——
 这比让模型随机调到一个错误实现要好。
 
+工具面对模型保持恒定由 `AgentRuntimeFactory` 负责：`baseplate.agent.tool-exposure-mode` 三选一（`cli` 默认 /
+`meta` / `direct`），内部工具注册进影子 `Toolkit`，主 toolkit 只放入口工具
+（以及必须由浏览器执行的 external、需要人工审批的 `ASK` 工具）。
+`ToolDirectory` 按 Agent 绑定、页面、用户权限生成目录并分发执行，
+因此模型收到的工具定义数量与平台工具总数无关，数据库里新增工具也不需要重新装配。
+
 **顺序很重要**：清单扫描发生在 `ApplicationRunner` 之前，所以权限目录同步一定拿得到完整模块列表。
 
 ---

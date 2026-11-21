@@ -46,6 +46,7 @@ baseplate-all/
 | `CurrentUser` / `CurrentUserProvider` | record/port | `baseplate/baseplate-api/.../api/model`、`api/port/out` | 身份与租户来源 |
 | `AgentRuntimeFactory` | class | `baseplate/baseplate-agent-starter/.../agent/runtime/` | 智能体装配与 system prompt |
 | `ToolRegistry` / `ToolDescriptor` | class/record | `baseplate/baseplate-agent-starter/.../agent/tool/` | 工具注册与页面/权限作用域 |
+| `ToolCliTool` / `ToolMetaTool` / `ToolDirectory` | class | `baseplate/baseplate-agent-starter/.../agent/tool/` | 暴露模式入口（cli / meta）与按需分发 |
 | `client.ts` | module | `baseplate-console/src/api/client.ts` | 前端唯一 axios 实例 |
 
 ## COMMANDS

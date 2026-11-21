@@ -37,6 +37,8 @@
 | `BASEPLATE_AGENT_MODEL` | 空 | | 首次启动写入智能体种子配置的模型名，如 `MiniMax-M3.1-Flash` |
 | `BASEPLATE_AGENT_BASE_URL` | 空 | | OpenAI 兼容端点，如 `https://api.minimax.cn/v1` |
 | `BASEPLATE_AGENT_API_KEY` | 空 | | 模型调用密钥；只在首次种子写入时使用，之后以控制台保存的配置为准 |
+| `BASEPLATE_AGENT_TOOL_EXPOSURE_MODE` | `cli` | | 内部工具暴露方式：`cli`（`baseplate` 命令行）/ `meta`（三个元工具）/ `direct`（全量直挂） |
+| `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL` | `true` | | 收敛模式是否自动挂载入口技能（`cli`→工具检索 / `meta`→工具元调用）；技能正文内置进 system prompt，关闭后只保留简短调用规则 |
 
 > 后三个密钥生产环境用 `openssl rand -hex 32` 生成，且**不能共用**。
 > `JWT_SECRET` 与 `OPEN_TOKEN_SECRET` 相同时，`openTokenSecretGuard` 会在启动期抛异常。
@@ -145,7 +147,7 @@ Successfully validated 21 migrations
 权限目录已同步：7 个模块，40 个权限点
 开放接口目录已同步：4 条（注解 4 条，手工 0 条）
 技能目录扫描完成: 3 个
-智能体工具注册完成: 14 个
+智能体工具注册完成: 28 个
 Started BootstrapApplication in 13.5 seconds
 ```
 

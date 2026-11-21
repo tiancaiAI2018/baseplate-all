@@ -37,6 +37,10 @@ baseplate:
     max-iters: 4
     stream-timeout-seconds: 120
     skill-dir: ./skills
+    # 内部工具暴露方式：cli（baseplate 命令行）/ meta（三个元工具）/ direct（全量直挂）
+    tool-exposure-mode: ${BASEPLATE_AGENT_TOOL_EXPOSURE_MODE:cli}
+    # 是否自动挂载对应的入口技能（工具检索 / 工具元调用）
+    tool-exposure-skill: ${BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL:true}
   identity:
     default-tenant: default
     password-expire-enabled: false

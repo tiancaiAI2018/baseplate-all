@@ -108,6 +108,62 @@ public final class SkillIndexService {
         return new FileSystemSkillRepository(skillRoot());
     }
 
+    public boolean exists(String skillName) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        Path root = skillRoot();
+        if (root == null) {
+            return false;
+        }
+        try (Stream<Path> dirs = Files.list(root)) {
+            for (Path dir : dirs.filter(Files::isDirectory).toList()) {
+                Path file = dir.resolve(SKILL_FILE);
+                if (!Files.isRegularFile(file)) {
+                    continue;
+                }
+                String name = extract(NAME, Files.readString(file, StandardCharsets.UTF_8),
+                        dir.getFileName().toString());
+                if (skillName.equals(name)) {
+                    return true;
+                }
+            }
+        } catch (IOException e) {
+            return false;
+        }
+        return false;
+    }
+
+    public String contentOf(String skillName) {
+        if (skillName == null || skillName.isBlank() || skillRoot() == null) {
+            return null;
+        }
+        try (Stream<Path> dirs = Files.list(skillRoot())) {
+            for (Path dir : dirs.filter(Files::isDirectory).toList()) {
+                Path file = dir.resolve(SKILL_FILE);
+                if (!Files.isRegularFile(file)) {
+                    continue;
+                }
+                String raw = Files.readString(file, StandardCharsets.UTF_8);
+                if (skillName.equals(extract(NAME, raw, dir.getFileName().toString()))) {
+                    return stripFrontMatter(raw);
+                }
+            }
+        } catch (IOException e) {
+            return null;
+        }
+        return null;
+    }
+
+    private static String stripFrontMatter(String raw) {
+        String text = raw.startsWith("\uFEFF") ? raw.substring(1) : raw;
+        if (!text.startsWith("---")) {
+            return text.trim();
+        }
+        int end = text.indexOf("\n---", 3);
+        return end < 0 ? text.trim() : text.substring(end + 4).trim();
+    }
+
     // ==================== 在线编辑 / 导入 ====================
 
     public record SkillDetail(String skillName, String description, String version, String path,

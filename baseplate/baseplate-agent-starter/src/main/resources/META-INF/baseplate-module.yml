@@ -21,6 +21,8 @@ config-keys:
   - baseplate.agent.default-model
   - baseplate.agent.default-base-url
   - baseplate.agent.max-iters
+  - baseplate.agent.tool-exposure-mode
+  - baseplate.agent.tool-exposure-skill
   - baseplate.agent.stream-timeout-seconds
   - baseplate.agent.skill-dir
 

@@ -171,7 +171,7 @@ config/PlatformProperties      token-secret / secret-key / ttl / 窗口 / 沙盒
 | `registry` | `ModuleDescriptorLoader`、`ModuleDescriptorValidator`、`MigrationPlanWriter` | 清单加载与校验 |
 | `runtime` | `PortRegistry`、`EncryptedPropertyEnvironmentPostProcessor`、`TenantContext` | 端口唯一性、配置解密 |
 | `adapters` | `redis/*`、`memory/*` | 每个端口两套实现 |
-| `agent` | `AgentChatService`、`AgentConfigService`、`AgentRuntimeFactory`、`ToolRegistry`、`SkillIndexService` | 智能体定义/会话/工具/技能/HITL/外部调用；只认工具接口，不认识具体业务 |
+| `agent` | `AgentChatService`、`AgentConfigService`、`AgentRuntimeFactory`、`ToolRegistry`、`ToolDirectory`、`ToolCliTool`、`SkillIndexService` | 智能体定义/会话/工具/技能/HITL/外部调用；内部工具经 `baseplate` CLI 按需检索执行；只认工具接口，不认识具体业务 |
 | `agent-workflow` | `WorkflowAgentTools`、`WorkflowAgentToolProvider`、`FormAgentTools`、`FormAgentToolProvider` | 业务工具声明；内部只读，写操作声明为外部工具交给前端执行 |
 
 ### `baseplate-bootstrap`（唯一可执行制品）

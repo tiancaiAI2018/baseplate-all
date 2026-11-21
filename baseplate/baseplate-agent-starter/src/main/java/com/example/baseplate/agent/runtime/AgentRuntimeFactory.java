@@ -5,13 +5,17 @@ import com.example.baseplate.agent.adapter.out.persistence.AgentModelCallReposit
 import com.example.baseplate.agent.application.RecordingModel;
 import com.example.baseplate.agent.application.SkillIndexService;
 import com.example.baseplate.agent.config.AgentProperties;
+import com.example.baseplate.agent.config.ToolExposureMode;
 import com.example.baseplate.agent.domain.AgentDefinition;
 import com.example.baseplate.agent.domain.ApprovalMode;
 import com.example.baseplate.agent.domain.ToolType;
 import com.example.baseplate.agent.model.ModelProviderFactory;
 import com.example.baseplate.agent.tool.AgentToolSpec;
 import com.example.baseplate.agent.tool.HttpApiTool;
+import com.example.baseplate.agent.tool.ToolCliTool;
 import com.example.baseplate.agent.tool.ToolDescriptor;
+import com.example.baseplate.agent.tool.ToolDirectory;
+import com.example.baseplate.agent.tool.ToolMetaTool;
 import com.example.baseplate.agent.tool.ToolRegistry;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.model.ToolSchema;
@@ -23,8 +27,10 @@ import io.agentscope.core.skill.SkillFilter;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,6 +53,10 @@ public final class AgentRuntimeFactory {
             回答要简短、准确；不确定的信息先查工具，不要编造。
             只能调用提供的工具，不要尝试访问工具之外的功能。
             """;
+
+    private static final String CLI_SKILL = "工具检索";
+    private static final String META_SKILL = "工具元调用";
+    private static final String SKILL_LOAD_TOOL = "load_skill_through_path";
 
     private final ToolRegistry toolRegistry;
     private final ModelProviderFactory modelFactory;
@@ -84,6 +94,7 @@ public final class AgentRuntimeFactory {
         // enabledTools 已在 selectTools 里按 pageKey 筛过：页面差异会体现在工具集合上，
         // 集合相同就共享实例，无需再把 pageKey 拼进缓存键。
         String cacheKey = tenant + ":" + definition.id() + ":" + definition.revision()
+                + ":" + properties.getToolExposureMode().name()
                 + ":" + String.join(",", enabledTools.stream().sorted().toList())
                 + ":" + policyKey + ":" + skillKey;
         return cache.computeIfAbsent(cacheKey,
@@ -94,15 +105,46 @@ public final class AgentRuntimeFactory {
                              Set<String> enabledTools, Map<String, ApprovalMode> policies,
                              List<String> skillNames) {
         Toolkit toolkit = new Toolkit();
+        ToolExposureMode mode = properties.getToolExposureMode();
+        boolean compact = mode != ToolExposureMode.DIRECT;
+        // 影子 toolkit 只用于入口工具分发执行，其 schema 不进模型上下文
+        Toolkit internalToolkit = new Toolkit();
+
         // 同一个处理器对象可能承载多个工具，按实例去重后只注册一次。
-        // 外部工具没有服务端 handler，执行由前端完成。
-        Set<Object> handlers = Collections.newSetFromMap(new IdentityHashMap<>());
+        // 外部工具没有服务端 handler，执行由前端完成；ASK 工具留在可见面由权限引擎接管。
+        Set<Object> compactHandlers = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<Object> approvalHandlers = Collections.newSetFromMap(new IdentityHashMap<>());
         for (AgentToolSpec spec : toolRegistry.all()) {
-            if (spec.handler() != null && spec.descriptor().type() != ToolType.EXTERNAL) {
-                handlers.add(spec.handler());
+            ToolDescriptor descriptor = spec.descriptor();
+            if (spec.handler() == null
+                    || descriptor.type() == ToolType.EXTERNAL
+                    || !enabledTools.contains(descriptor.code())) {
+                continue;
+            }
+            if (policies.get(descriptor.code()) == ApprovalMode.ASK) {
+                approvalHandlers.add(spec.handler());
+            } else {
+                compactHandlers.add(spec.handler());
             }
         }
-        handlers.forEach(toolkit::registerTool);
+        compactHandlers.forEach(compact ? internalToolkit::registerTool : toolkit::registerTool);
+        approvalHandlers.forEach(toolkit::registerTool);
+
+        // registerTool 会注册 handler 的全部方法，未启用或应收敛的 code 必须逐个摘掉
+        for (ToolDescriptor descriptor : toolRegistry.descriptors()) {
+            String code = descriptor.code();
+            if (descriptor.type() == ToolType.EXTERNAL) {
+                continue;
+            }
+            boolean enabled = enabledTools.contains(code);
+            boolean ask = policies.get(code) == ApprovalMode.ASK;
+            if (!(enabled && !ask)) {
+                internalToolkit.removeTool(code);
+            }
+            if (!(enabled && (ask || !compact))) {
+                toolkit.removeTool(code);
+            }
+        }
 
         // 代码声明的外部工具：只下发 schema，参数与结果走 external_tool_call 事件
         for (AgentToolSpec spec : toolRegistry.all()) {
@@ -118,12 +160,6 @@ public final class AgentRuntimeFactory {
                         .description(descriptor.description())
                         .parameters(schema)
                         .build());
-            }
-        }
-
-        for (ToolDescriptor descriptor : toolRegistry.descriptors()) {
-            if (!enabledTools.contains(descriptor.code())) {
-                toolkit.removeTool(descriptor.code());
             }
         }
 
@@ -145,11 +181,28 @@ public final class AgentRuntimeFactory {
                             .build());
                 } else if (row.toolType() == ToolType.CUSTOM_INTERNAL) {
                     // 服务端 HTTP 工具：参数、超时、内网拦截都在 HttpApiTool 里
-                    toolkit.registerAgentTool(new HttpApiTool(row.toolCode(), row.name(),
+                    HttpApiTool tool = new HttpApiTool(row.toolCode(), row.name(),
                             row.description(), row.paramsSchema(), row.config(),
-                            row.permissionCode()));
+                            row.permissionCode());
+                    if (policies.get(row.toolCode()) == ApprovalMode.ASK) {
+                        toolkit.registerAgentTool(tool);
+                    } else if (compact) {
+                        internalToolkit.registerAgentTool(tool);
+                    } else {
+                        toolkit.registerAgentTool(tool);
+                    }
                 }
             });
+        }
+
+        if (compact) {
+            ToolDirectory directory = new ToolDirectory(toolRegistry, definitionRepository,
+                    tenant, enabledTools, policies, internalToolkit);
+            if (mode == ToolExposureMode.CLI) {
+                toolkit.registerAgentTool(new ToolCliTool(directory));
+            } else {
+                ToolMetaTool.all(directory).forEach(toolkit::registerAgentTool);
+            }
         }
 
         ReActAgent.Builder builder = ReActAgent.builder()
@@ -164,21 +217,62 @@ public final class AgentRuntimeFactory {
 
         // HITL：把配置为 ASK 的工具登记为需确认；DENY 已在上面的 enabledTools 里排除。
         // 其余放行工具必须显式登记 ALLOW，否则会落到 PermissionEngine 的默认 ASK。
-        PermissionContextState permission = permissionContext(policies);
+        // 入口工具不参与业务策略，同样要补 ALLOW，否则有 ASK 工具时会被默认值拦成审批。
+        PermissionContextState permission = permissionContext(entryPolicies(policies, mode));
         if (!permission.isTrivial()) {
             builder.permissionContext(permission);
         }
         // 技能正文在本地目录；目录为空时不挂载，避免框架对空仓库直接报错
         if (skillIndexService.available()) {
             builder.skillRepository(skillIndexService.repository());
-            if (skillNames != null) {
-                // 绑定为空 = 这个 Agent 明确不使用技能；null 才表示未配置、全部可用
-                builder.skillFilter(skillNames.isEmpty()
+            List<String> effectiveSkills = effectiveSkills(skillNames, mode);
+            if (effectiveSkills != null) {
+                // 绑定为空 = 这个 Agent 明确不使用业务技能；null 才表示未配置、全部可用
+                builder.skillFilter(effectiveSkills.isEmpty()
                         ? SkillFilter.none()
-                        : SkillFilter.only(skillNames.toArray(String[]::new)));
+                        : SkillFilter.only(effectiveSkills.toArray(String[]::new)));
             }
         }
         return builder.build();
+    }
+
+    private String entrySkill(ToolExposureMode mode) {
+        if (!properties.isToolExposureSkill()) {
+            return null;
+        }
+        return switch (mode) {
+            case CLI -> CLI_SKILL;
+            case META -> META_SKILL;
+            case DIRECT -> null;
+        };
+    }
+
+    private List<String> effectiveSkills(List<String> bound, ToolExposureMode mode) {
+        String entrySkill = entrySkill(mode);
+        if (entrySkill == null || bound == null || bound.contains(entrySkill)) {
+            return bound;
+        }
+        if (!skillIndexService.exists(entrySkill)) {
+            return bound;
+        }
+        List<String> merged = new ArrayList<>(bound);
+        merged.add(entrySkill);
+        return merged;
+    }
+
+    public static Map<String, ApprovalMode> entryPolicies(Map<String, ApprovalMode> policies,
+                                                          ToolExposureMode mode) {
+        Map<String, ApprovalMode> effective = new LinkedHashMap<>(policies);
+        if (mode != ToolExposureMode.DIRECT) {
+            List<String> entries = mode == ToolExposureMode.CLI
+                    ? List.of(ToolCliTool.CODE) : ToolMetaTool.codes();
+            for (String code : entries) {
+                // 入口工具只是分发器，自身一律 ALLOW；内部工具仍按各自策略在 ToolDirectory 二次校验
+                effective.put(code, ApprovalMode.ALLOW);
+            }
+        }
+        effective.putIfAbsent(SKILL_LOAD_TOOL, ApprovalMode.ALLOW);
+        return effective;
     }
 
     /**
@@ -231,7 +325,26 @@ public final class AgentRuntimeFactory {
     public String systemPrompt(AgentDefinition definition) {
         String base = definition.systemPrompt() == null || definition.systemPrompt().isBlank()
                 ? DEFAULT_SYSTEM_PROMPT : definition.systemPrompt();
-        return base + "\n\n[运行规则]\n工具返回失败时必须如实告知用户失败原因，绝不能声称成功。";
+        String entryRules = switch (properties.getToolExposureMode()) {
+            case CLI -> entryRule("baseplate 命令行", "find / show / call", "call", CLI_SKILL);
+            case META -> entryRule("三个元工具", "tool_search / tool_describe / tool_call",
+                    "tool_call", META_SKILL);
+            case DIRECT -> "只调用提供给你的工具；不确定参数时先查询再回答。";
+        };
+        return base + "\n\n[运行规则]\n" + entryRules + "\n"
+                + "工具返回失败时必须如实告知用户失败原因，绝不能声称成功。";
+    }
+
+    private String entryRule(String channel, String tools, String entryName, String skillName) {
+        String head = "业务工具通过" + channel + "访问：" + tools + "。";
+        String tail = "外部工具与需审批工具不要用 " + entryName + "，按返回提示直接调用原工具。";
+        if (!properties.isToolExposureSkill()) {
+            return head + tail;
+        }
+        String body = skillIndexService.contentOf(skillName);
+        return body == null || body.isBlank() ? head + tail
+                : head + "按下面的「" + skillName + "」执行（正文已内置，不要调用 "
+                + SKILL_LOAD_TOOL + " 加载）：\n" + body + "\n" + tail;
     }
 
     /** 配置变更后清掉旧实例，避免继续使用旧提示词/旧工具集。 */
