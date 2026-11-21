@@ -40,6 +40,7 @@ public final class SkillIndexService {
     private static final Pattern NAME = Pattern.compile("(?m)^name:\\s*(.+)$");
     private static final Pattern DESCRIPTION = Pattern.compile("(?m)^description:\\s*(.+)$");
     private static final Pattern VERSION = Pattern.compile("(?m)^version:\\s*(.+)$");
+    private static final Pattern MODES = Pattern.compile("(?m)^modes:\\s*(.+)$");
 
     private final AgentSkillIndexRepository repository;
     private final AgentProperties properties;
@@ -105,7 +106,7 @@ public final class SkillIndexService {
     }
 
     public FileSystemSkillRepository repository() {
-        return new FileSystemSkillRepository(skillRoot());
+        return new FileSystemSkillRepository(skillRoot(), true, "baseplate");
     }
 
     public boolean exists(String skillName) {
@@ -134,34 +135,30 @@ public final class SkillIndexService {
         return false;
     }
 
-    public String contentOf(String skillName) {
-        if (skillName == null || skillName.isBlank() || skillRoot() == null) {
-            return null;
+    public List<String> byMode(String mode) {
+        Path root = skillRoot();
+        if (root == null || mode == null || mode.isBlank()) {
+            return List.of();
         }
-        try (Stream<Path> dirs = Files.list(skillRoot())) {
+        List<String> matched = new ArrayList<>();
+        try (Stream<Path> dirs = Files.list(root)) {
             for (Path dir : dirs.filter(Files::isDirectory).toList()) {
                 Path file = dir.resolve(SKILL_FILE);
                 if (!Files.isRegularFile(file)) {
                     continue;
                 }
                 String raw = Files.readString(file, StandardCharsets.UTF_8);
-                if (skillName.equals(extract(NAME, raw, dir.getFileName().toString()))) {
-                    return stripFrontMatter(raw);
+                for (String declared : extract(MODES, raw, "").split("[,\\s]+")) {
+                    if (declared.equalsIgnoreCase(mode)) {
+                        matched.add(extract(NAME, raw, dir.getFileName().toString()));
+                        break;
+                    }
                 }
             }
         } catch (IOException e) {
-            return null;
+            return List.of();
         }
-        return null;
-    }
-
-    private static String stripFrontMatter(String raw) {
-        String text = raw.startsWith("\uFEFF") ? raw.substring(1) : raw;
-        if (!text.startsWith("---")) {
-            return text.trim();
-        }
-        int end = text.indexOf("\n---", 3);
-        return end < 0 ? text.trim() : text.substring(end + 4).trim();
+        return matched;
     }
 
     // ==================== 在线编辑 / 导入 ====================
@@ -183,7 +180,8 @@ public final class SkillIndexService {
     }
 
     /** 新建技能目录 + SKILL.md；正文没带 frontmatter 时自动补齐。 */
-    public SkillDetail create(String tenant, String skillName, String description, String content) {
+    public SkillDetail create(String tenant, String skillName, String description, String content,
+                              String modes) {
         validateSkillName(skillName);
         Path root = requireRoot();
         if (repository.find(tenant, skillName.trim()).isPresent()) {
@@ -192,8 +190,8 @@ public final class SkillIndexService {
         Path dir = resolveInside(root, skillName.trim());
         try {
             Files.createDirectories(dir);
-            Files.writeString(dir.resolve(SKILL_FILE), compose(skillName.trim(), description, content),
-                    StandardCharsets.UTF_8);
+            Files.writeString(dir.resolve(SKILL_FILE),
+                    compose(skillName.trim(), description, content, modes), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new IllegalStateException("写入技能失败：" + e.getMessage(), e);
         }
@@ -309,12 +307,13 @@ public final class SkillIndexService {
         }
     }
 
-    private static String compose(String name, String description, String content) {
+    private static String compose(String name, String description, String content, String modes) {
         if (content != null && content.stripLeading().startsWith("---")) {
             return content;
         }
+        String modesLine = modes == null || modes.isBlank() ? "" : "modes: " + modes.trim() + "\n";
         return "---\nname: " + name + "\ndescription: "
-                + (description == null ? "" : description) + "\nversion: 1\n---\n\n"
+                + (description == null ? "" : description) + "\nversion: 1\n" + modesLine + "---\n\n"
                 + (content == null ? "" : content);
     }
 

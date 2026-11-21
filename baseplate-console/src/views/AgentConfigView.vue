@@ -219,6 +219,12 @@
         <el-form-item v-if="!skillEditing" label="描述">
           <el-input v-model="skillForm.description" placeholder="一句话说明什么时候用这个技能" />
         </el-form-item>
+        <el-form-item v-if="!skillEditing" label="适用模式">
+          <el-input v-model="skillForm.modes" placeholder="cli / meta，多个用逗号分隔；留空则不按模式自动挂载" />
+          <div class="hint">
+            填写 cli 后该技能只在 CLI 模式挂载，meta 同理；也可以在 SKILL.md 的 frontmatter 里直接写 modes: cli
+          </div>
+        </el-form-item>
         <el-form-item label="SKILL.md" required>
           <el-input v-model="skillForm.content" type="textarea" :rows="16"
                     placeholder="支持 Markdown；新建时可以不写 frontmatter，保存时自动补 name/description/version" />
@@ -565,7 +571,7 @@ const skillFolderInput = ref<HTMLInputElement | null>(null)
 const skillFormVisible = ref(false)
 const skillSaving = ref(false)
 const skillEditing = ref<string | null>(null)
-const skillForm = reactive({ skillName: '', description: '', content: '' })
+const skillForm = reactive({ skillName: '', description: '', modes: '', content: '' })
 
 /** 列表通常只有几十条，前端过滤足够，不额外加接口。 */
 const filteredSkills = computed(() => {
@@ -782,7 +788,7 @@ async function rescanSkills() {
 
 function openCreateSkill() {
   skillEditing.value = null
-  Object.assign(skillForm, { skillName: '', description: '', content: '' })
+  Object.assign(skillForm, { skillName: '', description: '', modes: '', content: '' })
   skillFormVisible.value = true
 }
 
@@ -814,6 +820,7 @@ async function saveSkill() {
       await agentApi.createSkill({
         skillName: skillForm.skillName.trim(),
         description: skillForm.description.trim(),
+        modes: skillForm.modes.trim(),
         content: skillForm.content
       })
     }

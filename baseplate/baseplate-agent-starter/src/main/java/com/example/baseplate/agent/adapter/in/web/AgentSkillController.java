@@ -44,7 +44,7 @@ public class AgentSkillController {
         this.currentUser = currentUser;
     }
 
-    public record SkillCreateRequest(String skillName, String description, String content) {
+    public record SkillCreateRequest(String skillName, String description, String content, String modes) {
     }
 
     public record SkillUpdateRequest(String content) {
@@ -75,7 +75,7 @@ public class AgentSkillController {
     @RequiresPermission("agent:config:edit")
     public SkillIndexService.SkillDetail create(@RequestBody SkillCreateRequest request) {
         SkillIndexService.SkillDetail detail = skillIndexService.create(tenant(),
-                request.skillName(), request.description(), request.content());
+                request.skillName(), request.description(), request.content(), request.modes());
         runtimeFactory.invalidateAll();
         return detail;
     }

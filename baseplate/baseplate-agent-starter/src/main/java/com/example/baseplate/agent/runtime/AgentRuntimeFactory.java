@@ -27,7 +27,6 @@ import io.agentscope.core.skill.SkillFilter;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -54,8 +53,8 @@ public final class AgentRuntimeFactory {
             只能调用提供的工具，不要尝试访问工具之外的功能。
             """;
 
-    private static final String CLI_SKILL = "工具检索";
-    private static final String META_SKILL = "工具元调用";
+    private static final String SKILL_MODE_CLI = "cli";
+    private static final String SKILL_MODE_META = "meta";
     private static final String SKILL_LOAD_TOOL = "load_skill_through_path";
 
     private final ToolRegistry toolRegistry;
@@ -250,28 +249,20 @@ public final class AgentRuntimeFactory {
         return builder.build();
     }
 
-    private String entrySkill(ToolExposureMode mode) {
+    private List<String> skillsForMode(ToolExposureMode mode) {
         if (!properties.isToolExposureSkill()) {
-            return null;
+            return List.of();
         }
         return switch (mode) {
-            case CLI -> CLI_SKILL;
-            case META -> META_SKILL;
-            case DIRECT -> null;
+            case CLI -> skillIndexService.byMode(SKILL_MODE_CLI);
+            case META -> skillIndexService.byMode(SKILL_MODE_META);
+            case DIRECT -> List.of();
         };
     }
 
     private List<String> effectiveSkills(List<String> bound, ToolExposureMode mode) {
-        String entrySkill = entrySkill(mode);
-        if (entrySkill == null || bound == null || bound.contains(entrySkill)) {
-            return bound;
-        }
-        if (!skillIndexService.exists(entrySkill)) {
-            return bound;
-        }
-        List<String> merged = new ArrayList<>(bound);
-        merged.add(entrySkill);
-        return merged;
+        List<String> modeSkills = skillsForMode(mode);
+        return modeSkills.isEmpty() ? bound : modeSkills;
     }
 
     public static Map<String, ApprovalMode> entryPolicies(Map<String, ApprovalMode> policies,
@@ -340,26 +331,19 @@ public final class AgentRuntimeFactory {
         String base = definition.systemPrompt() == null || definition.systemPrompt().isBlank()
                 ? DEFAULT_SYSTEM_PROMPT : definition.systemPrompt();
         String entryRules = switch (properties.getToolExposureMode()) {
-            case CLI -> entryRule("baseplate 命令行", "find / show / call", "call", CLI_SKILL);
+            case CLI -> entryRule("baseplate 命令行", "find / show / call", "call");
             case META -> entryRule("三个元工具", "tool_search / tool_describe / tool_call",
-                    "tool_call", META_SKILL);
+                    "tool_call");
             case DIRECT -> "只调用提供给你的工具；不确定参数时先查询再回答。";
         };
         return base + "\n\n[运行规则]\n" + entryRules + "\n"
                 + "工具返回失败时必须如实告知用户失败原因，绝不能声称成功。";
     }
 
-    private String entryRule(String channel, String tools, String entryName, String skillName) {
-        String head = "业务工具通过" + channel + "访问：" + tools + "。";
-        String tail = "外部工具与需审批工具也要用 " + entryName
-                + " 执行，入口会自动请求浏览器执行或人工确认，不要尝试直接调用工具名。";
-        if (!properties.isToolExposureSkill()) {
-            return head + tail;
-        }
-        String body = skillIndexService.contentOf(skillName);
-        return body == null || body.isBlank() ? head + tail
-                : head + "按下面的「" + skillName + "」执行（正文已内置，不要调用 "
-                + SKILL_LOAD_TOOL + " 加载）：\n" + body + "\n" + tail;
+    private String entryRule(String channel, String tools, String entryName) {
+        return "所有业务操作都通过" + channel + "（" + tools + "）完成；外部工具与需审批工具"
+                + "同样用 " + entryName + " 执行，入口会自动请求浏览器执行或人工确认，"
+                + "不要尝试直接调用工具名。";
     }
 
     /** 配置变更后清掉旧实例，避免继续使用旧提示词/旧工具集。 */

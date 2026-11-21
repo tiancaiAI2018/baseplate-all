@@ -38,7 +38,7 @@
 | `BASEPLATE_AGENT_BASE_URL` | 空 | | OpenAI 兼容端点，如 `https://api.minimax.cn/v1` |
 | `BASEPLATE_AGENT_API_KEY` | 空 | | 模型调用密钥；只在首次种子写入时使用，之后以控制台保存的配置为准 |
 | `BASEPLATE_AGENT_TOOL_EXPOSURE_MODE` | `cli` | | 内部工具暴露方式：`cli`（`baseplate` 命令行）/ `meta`（三个元工具）/ `direct`（全量直挂） |
-| `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL` | `true` | | 收敛模式是否自动挂载入口技能（`cli`→工具检索 / `meta`→工具元调用）；技能正文内置进 system prompt，关闭后只保留简短调用规则 |
+| `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL` | `true` | | 收敛模式是否自动切换到专属技能集（`cli`→`modes` 含 cli 的技能 / `meta`→含 meta 的技能 / `direct`→Agent 原本绑定的技能）；归属由 SKILL.md frontmatter 声明、页面新增技能可填，技能正文由模型按需加载，不写进 system prompt |
 
 > 后三个密钥生产环境用 `openssl rand -hex 32` 生成，且**不能共用**。
 > `JWT_SECRET` 与 `OPEN_TOKEN_SECRET` 相同时，`openTokenSecretGuard` 会在启动期抛异常。

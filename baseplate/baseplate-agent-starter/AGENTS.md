@@ -40,7 +40,7 @@ resources/META-INF/baseplate-module.yml
 | `meta` | `tool_search` / `tool_describe` / `tool_call` | 工具多、要求严格 JSON 参数 |
 
 - 三种模式共用 `ToolDirectory`：按 `enabledTools` + 页面 + 权限生成目录，数据库里新增的工具自动可见，无需改代码。
-- 收敛模式（`cli`/`meta`）自动挂载入口技能 `工具检索` / `工具元调用`，由 `baseplate.agent.tool-exposure-skill`（env `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL`，默认 `true`）控制；开启时把 SKILL.md 正文内置进 system prompt（避免模型猜错 `load_skill_through_path` 的 skillId），关闭时只留简短调用规则。技能正文写在 SKILL.md，不要再往 prompt 里拼工具列表。
+- 收敛模式（`cli`/`meta`）通过 `SkillFilter.only` 自动切换到专属技能集，其它技能不可见。**技能归属由 SKILL.md frontmatter 的 `modes` 字段声明，不在代码里写死**：`SkillIndexService.byMode("cli"/"meta")` 扫描文件按 `modes` 过滤；页面新增技能填「适用模式」或导入时在 frontmatter 写 `modes: cli`，保存后 `SkillController` 触发 `invalidateAll()` 重建 runtime，新技能即刻进入对应模式。`direct` 挂 Agent 原本绑定的技能。由 `baseplate.agent.tool-exposure-skill`（env `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL`，默认 `true`）控制，关闭时同样沿用原本绑定。技能正文只写在 SKILL.md，由模型按需 `load_skill_through_path` 加载，**不要**内置进 system prompt。`SkillIndexService.repository()` 传固定 source `baseplate`，所以 skillId 形如 `CLI工具检索_baseplate`，技能 description 里写明该 id 供模型照抄。
 - `AgentRuntimeFactory` 用影子 `Toolkit` 保存内部工具；入口工具以 `getTool(code).callAsync(param)` 执行，绕过激活门但原样透传 `RuntimeContext`（principal/tenant/pageKey），执行期再校验权限、页面与审批策略。
 - 外部工具与 `ASK` 工具始终直接注册在主 toolkit，不走入口工具：前者只能由浏览器执行，后者必须由 PermissionEngine 触发审批。入口工具本身需要显式补 `ALLOW` 权限规则，否则有 ASK 工具时会被默认值误拦。
 - 新增 internal 工具只需实现 `AgentToolProvider`，不要手工往主 toolkit 注册。

@@ -92,7 +92,7 @@ export const agentApi = {
   rescanSkills: () => http.post<{ scanned: number }>('/api/agent/skills/rescan'),
   skillDetail: (skillName: string) =>
     http.get<SkillDetailView>(`/api/agent/skills/${encodeURIComponent(skillName)}`),
-  createSkill: (payload: { skillName: string; description?: string; content?: string }) =>
+  createSkill: (payload: { skillName: string; description?: string; modes?: string; content?: string }) =>
     http.post<SkillDetailView>('/api/agent/skills', payload),
   updateSkill: (skillName: string, content: string) =>
     http.put<SkillDetailView>(`/api/agent/skills/${encodeURIComponent(skillName)}`, { content }),
