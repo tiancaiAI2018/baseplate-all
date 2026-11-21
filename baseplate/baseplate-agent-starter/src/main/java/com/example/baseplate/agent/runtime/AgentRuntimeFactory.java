@@ -111,7 +111,8 @@ public final class AgentRuntimeFactory {
         Toolkit internalToolkit = new Toolkit();
 
         // 同一个处理器对象可能承载多个工具，按实例去重后只注册一次。
-        // 外部工具没有服务端 handler，执行由前端完成；ASK 工具留在可见面由权限引擎接管。
+        // 收敛模式下 ASK/EXTERNAL 也走入口：ASK 由入口 checkPermissions 代报，EXTERNAL 抛
+        // ToolSuspendException，因此它们不再单独注册进主 toolkit 占用模型 token。
         Set<Object> compactHandlers = Collections.newSetFromMap(new IdentityHashMap<>());
         Set<Object> approvalHandlers = Collections.newSetFromMap(new IdentityHashMap<>());
         for (AgentToolSpec spec : toolRegistry.all()) {
@@ -123,12 +124,17 @@ public final class AgentRuntimeFactory {
             }
             if (policies.get(descriptor.code()) == ApprovalMode.ASK) {
                 approvalHandlers.add(spec.handler());
+                if (compact) {
+                    compactHandlers.add(spec.handler());
+                }
             } else {
                 compactHandlers.add(spec.handler());
             }
         }
         compactHandlers.forEach(compact ? internalToolkit::registerTool : toolkit::registerTool);
-        approvalHandlers.forEach(toolkit::registerTool);
+        if (!compact) {
+            approvalHandlers.forEach(toolkit::registerTool);
+        }
 
         // registerTool 会注册 handler 的全部方法，未启用或应收敛的 code 必须逐个摘掉
         for (ToolDescriptor descriptor : toolRegistry.descriptors()) {
@@ -138,7 +144,7 @@ public final class AgentRuntimeFactory {
             }
             boolean enabled = enabledTools.contains(code);
             boolean ask = policies.get(code) == ApprovalMode.ASK;
-            if (!(enabled && !ask)) {
+            if (!(enabled && (!ask || compact))) {
                 internalToolkit.removeTool(code);
             }
             if (!(enabled && (ask || !compact))) {
@@ -146,8 +152,11 @@ public final class AgentRuntimeFactory {
             }
         }
 
-        // 代码声明的外部工具：只下发 schema，参数与结果走 external_tool_call 事件
+        // 代码声明的外部工具：直连模式下只下发 schema；收敛模式由入口工具发现并转外部执行
         for (AgentToolSpec spec : toolRegistry.all()) {
+            if (compact) {
+                break;
+            }
             ToolDescriptor descriptor = spec.descriptor();
             // 页面可用性已在入口的 selectTools 里校验，这里只按启用集合注册
             if (descriptor.type() == ToolType.EXTERNAL
@@ -163,29 +172,34 @@ public final class AgentRuntimeFactory {
             }
         }
 
-        // 数据库里配置的外部工具：只注册 schema，执行由前端完成。
-        // 代码工具优先；同名自定义工具在创建时就被拒绝。
+        // 数据库里配置的外部工具：直连模式只注册 schema；代码工具优先。
+        // 同名自定义工具在创建时就被拒绝。
         for (String toolCode : enabledTools) {
             if (toolRegistry.find(toolCode) != null) {
                 continue;
             }
             definitionRepository.findTool(tenant, toolCode).ifPresent(row -> {
                 if (row.toolType() == ToolType.EXTERNAL) {
-                    Map<String, Object> schema = row.paramsSchema().isEmpty()
-                            ? Map.of("type", "object", "properties", Map.of())
-                            : row.paramsSchema();
-                    toolkit.registerSchema(ToolSchema.builder()
-                            .name(row.toolCode())
-                            .description(row.description() == null ? row.name() : row.description())
-                            .parameters(schema)
-                            .build());
+                    if (!compact) {
+                        Map<String, Object> schema = row.paramsSchema().isEmpty()
+                                ? Map.of("type", "object", "properties", Map.of())
+                                : row.paramsSchema();
+                        toolkit.registerSchema(ToolSchema.builder()
+                                .name(row.toolCode())
+                                .description(row.description() == null ? row.name() : row.description())
+                                .parameters(schema)
+                                .build());
+                    }
                 } else if (row.toolType() == ToolType.CUSTOM_INTERNAL) {
                     // 服务端 HTTP 工具：参数、超时、内网拦截都在 HttpApiTool 里
                     HttpApiTool tool = new HttpApiTool(row.toolCode(), row.name(),
                             row.description(), row.paramsSchema(), row.config(),
                             row.permissionCode());
                     if (policies.get(row.toolCode()) == ApprovalMode.ASK) {
-                        toolkit.registerAgentTool(tool);
+                        if (!compact) {
+                            toolkit.registerAgentTool(tool);
+                        }
+                        internalToolkit.registerAgentTool(tool);
                     } else if (compact) {
                         internalToolkit.registerAgentTool(tool);
                     } else {
@@ -337,7 +351,8 @@ public final class AgentRuntimeFactory {
 
     private String entryRule(String channel, String tools, String entryName, String skillName) {
         String head = "业务工具通过" + channel + "访问：" + tools + "。";
-        String tail = "外部工具与需审批工具不要用 " + entryName + "，按返回提示直接调用原工具。";
+        String tail = "外部工具与需审批工具也要用 " + entryName
+                + " 执行，入口会自动请求浏览器执行或人工确认，不要尝试直接调用工具名。";
         if (!properties.isToolExposureSkill()) {
             return head + tail;
         }

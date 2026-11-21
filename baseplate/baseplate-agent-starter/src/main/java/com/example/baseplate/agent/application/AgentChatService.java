@@ -13,6 +13,8 @@ import com.example.baseplate.agent.config.AgentProperties;
 import com.example.baseplate.agent.domain.AgentDefinition;
 import com.example.baseplate.agent.domain.AgentSession;
 import com.example.baseplate.agent.domain.ApprovalMode;
+import com.example.baseplate.agent.tool.ToolCliTool;
+import com.example.baseplate.agent.tool.ToolDirectory;
 import com.example.baseplate.agent.domain.ToolType;
 import com.example.baseplate.agent.runtime.AgentEventMapper;
 import com.example.baseplate.agent.runtime.AgentRuntimeFactory;
@@ -391,10 +393,14 @@ public final class AgentChatService {
     }
 
     private Map<String, Object> hitlPayload(long approvalId, RequireUserConfirmEvent confirm) {
-        List<Map<String, Object>> calls = confirm.getToolCalls().stream().map(tool -> Map.of(
-                "callId", tool.getId() == null ? "" : tool.getId(),
-                "tool", tool.getName() == null ? "" : tool.getName(),
-                "args", tool.getInput() == null ? Map.of() : tool.getInput())).toList();
+        List<Map<String, Object>> calls = confirm.getToolCalls().stream().map(tool -> {
+            String toolCode = tool.getName() == null ? "" : tool.getName();
+            Map<String, Object> args = tool.getInput() == null ? Map.of() : tool.getInput();
+            return Map.of(
+                    "callId", tool.getId() == null ? "" : tool.getId(),
+                    "tool", displayTool(toolCode, args),
+                    "args", args);
+        }).toList();
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("approvalId", approvalId);
         payload.put("replyId", confirm.getReplyId() == null ? "" : confirm.getReplyId());
@@ -402,6 +408,23 @@ public final class AgentChatService {
         payload.put("expiresAt", OffsetDateTime.now()
                 .plusSeconds(properties.getHitlTimeoutSeconds()).toString());
         return payload;
+    }
+
+    private static String displayTool(String tool, Map<String, Object> args) {
+        if (ToolCliTool.CODE.equals(tool) && args.get("script") instanceof String script) {
+            for (String line : script.split("\\R")) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith("call ") || trimmed.startsWith("invoke ")) {
+                    String rest = trimmed.substring(trimmed.indexOf(' ') + 1).trim();
+                    int split = rest.indexOf(' ');
+                    return split < 0 ? rest : rest.substring(0, split);
+                }
+            }
+        }
+        if ("tool_call".equals(tool) && args.get("code") != null) {
+            return String.valueOf(args.get("code"));
+        }
+        return tool;
     }
 
     /**
@@ -413,8 +436,40 @@ public final class AgentChatService {
      * {@code argument "content" is null}，而不是真正执行。</p>
      */
     private ToolUseBlock resumeToolCall(PendingCall call) {
-        Map<String, Object> args = call.args() == null ? Map.of() : call.args();
-        return new ToolUseBlock(call.callId(), call.tool(), args,
+        Map<String, Object> args = call.args() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(call.args());
+        String tool = call.tool();
+        if (args.get(ToolDirectory.ASK_KEY) instanceof Map<?, ?> request) {
+            Object requested = request.get("code");
+            if (requested != null) {
+                String code = String.valueOf(requested);
+                Map<String, Object> realArgs = new LinkedHashMap<>();
+                if (request.get("args") instanceof Map<?, ?> payload) {
+                    payload.forEach((key, value) -> realArgs.put(String.valueOf(key), value));
+                }
+                args.put(ToolDirectory.APPROVED_KEY, true);
+                if (ToolCliTool.CODE.equals(tool)) {
+                    args.put("script", "call " + code + " " + mapper.writeValueAsString(realArgs));
+                } else {
+                    args.put("code", code);
+                    args.put("arguments", realArgs);
+                }
+            }
+        }
+        if (!args.containsKey(ToolDirectory.APPROVED_KEY)) {
+            if (ToolCliTool.CODE.equals(tool) && args.get("script") instanceof String script) {
+                for (String line : script.split("\\R")) {
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("call ") || trimmed.startsWith("invoke ")) {
+                        args.put(ToolDirectory.APPROVED_KEY, true);
+                        break;
+                    }
+                }
+            } else if ("tool_call".equals(tool) && args.get("code") != null) {
+                args.put(ToolDirectory.APPROVED_KEY, true);
+            }
+        }
+        return new ToolUseBlock(call.callId(), tool, args,
                 mapper.writeValueAsString(args), null, ToolCallState.ASKING);
     }
 
@@ -452,7 +507,13 @@ public final class AgentChatService {
         for (ToolUseBlock tool : event.getToolCalls()) {
             String callId = tool.getId() == null ? "" : tool.getId();
             String toolCode = tool.getName() == null ? "" : tool.getName();
-            Map<String, Object> args = tool.getInput() == null ? Map.of() : tool.getInput();
+            Map<String, Object> args = tool.getInput() == null
+                    ? new LinkedHashMap<>() : new LinkedHashMap<>(tool.getInput());
+            ExternalTarget target = resolveEntryCall(toolCode, args);
+            if (target != null) {
+                toolCode = target.code();
+                args = target.args();
+            }
             externalCallRepository.create(tenant, session.id(), user.userId(), agent.id(),
                     replyId, callId, toolCode, mapper.writeValueAsString(args), expiresAt);
 
@@ -475,6 +536,53 @@ public final class AgentChatService {
         payload.put("calls", calls);
         payload.put("expiresAt", expiresAt.toString());
         return payload;
+    }
+
+    private record ExternalTarget(String code, Map<String, Object> args) {
+    }
+
+    private ExternalTarget resolveEntryCall(String toolCode, Map<String, Object> args) {
+        if (!ToolCliTool.CODE.equals(toolCode) && !"tool_call".equals(toolCode)) {
+            return null;
+        }
+        if (args.get("script") instanceof String script) {
+            String call = null;
+            for (String line : script.split("\\R")) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith("call ") || trimmed.startsWith("invoke ")) {
+                    call = trimmed;
+                }
+            }
+            if (call == null) {
+                return null;
+            }
+            String rest = call.substring(call.indexOf(' ') + 1).trim();
+            int split = rest.indexOf(' ');
+            String code = split < 0 ? rest : rest.substring(0, split);
+            Map<String, Object> parsed = Map.of();
+            if (split >= 0) {
+                try {
+                    Object value = mapper.readValue(rest.substring(split + 1).trim(), Object.class);
+                    if (value instanceof Map<?, ?> map) {
+                        Map<String, Object> copy = new LinkedHashMap<>();
+                        map.forEach((key, entry) -> copy.put(String.valueOf(key), entry));
+                        parsed = copy;
+                    }
+                } catch (RuntimeException ignored) {
+                }
+            }
+            return new ExternalTarget(code, parsed);
+        }
+        if (args.get("code") != null) {
+            Map<String, Object> parsed = Map.of();
+            if (args.get("arguments") instanceof Map<?, ?> map) {
+                Map<String, Object> copy = new LinkedHashMap<>();
+                map.forEach((key, entry) -> copy.put(String.valueOf(key), entry));
+                parsed = copy;
+            }
+            return new ExternalTarget(String.valueOf(args.get("code")), parsed);
+        }
+        return null;
     }
 
     /**

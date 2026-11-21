@@ -45,6 +45,8 @@ resources/META-INF/baseplate-module.yml
 - 外部工具与 `ASK` 工具始终直接注册在主 toolkit，不走入口工具：前者只能由浏览器执行，后者必须由 PermissionEngine 触发审批。入口工具本身需要显式补 `ALLOW` 权限规则，否则有 ASK 工具时会被默认值误拦。
 - 新增 internal 工具只需实现 `AgentToolProvider`，不要手工往主 toolkit 注册。
 - 入口工具执行内部工具后必须用 `ToolDirectory.withUi` 透传结果的 `ui` 元数据，否则内部工具（如 `workflow_list_my_tasks`）的 UI 卡片不会生成 `event: ui`。
+- 收敛模式下 `ASK` / `EXTERNAL` 仍走框架原生流程，但不再单独注册 schema 占用 token，入口工具只做转发：`checkPermissions` 解析脚本里的 `call`，命中 `ASK` 子工具就用带 `safety` 的 `PermissionDecision.ask` 请求人工确认（必须带 safety，否则被入口的 ALLOW 规则覆盖）；用户确认后 `resumeToolCall` 写入 `__baseplate_approved__`，入口与 `ToolDirectory` 才放行。命中 `EXTERNAL` 则抛 `ToolSuspendException`，由 `RequireExternalExecutionEvent` 交给前端执行；`AgentChatService.createExternalCalls` 从入口脚本里解析出真实工具码/参数下发，不能靠修改工具 input 传标记（`ToolExecutor` 用的是 input 拷贝）。
+- 入口工具是 `ToolBase`，`ToolDirectory` 里的 `ASK` 工具也要注册到影子 toolkit，否则确认通过后无人执行。
 
 ## CONVENTIONS
 - 有副作用的操作只能做 external 工具，不得在内部工具里直接改业务数据。

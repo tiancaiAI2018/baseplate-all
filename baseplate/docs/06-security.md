@@ -279,7 +279,7 @@ chain.doFilter(...);
 | 工具类型 | 安全边界 |
 |---|---|
 | 内部工具 | 服务端执行，`requirePermission` 按当前用户权限点校验；只做只读查询 |
-| 外部工具 | 只下发 schema 与参数；前端带用户令牌调现有 REST，`@RequiresPermission`、`@AuditLog`、`requireOwnedTask` 全部照常生效 |
+| 外部工具 | `direct` 模式直接下发 schema；收敛模式由入口工具发现后抛 `ToolSuspendException` 转前端执行。前端始终带用户令牌调现有 REST，`@RequiresPermission`、`@AuditLog`、`requireOwnedTask` 全部照常生效 |
 
 工具在**进入模型之前**就已经过滤：`selectTools` 依次检查页面匹配、用户权限点、Agent 绑定与审批策略。
 模型看不到一个它调不动的工具。
@@ -291,7 +291,7 @@ Agent、工具、会话三者都带 `pageKey`。换页继续旧会话时同步 `
 
 ### 6.3 HITL 与外部调用
 
-- 审批策略为 `ASK` 的工具先落 `agent_hitl_request`，用户同意后带 `ConfirmResult` 恢复同一会话
+- 审批策略为 `ASK` 的工具先落 `agent_hitl_request`，用户同意后带 `ConfirmResult` 恢复同一会话；收敛模式下由入口工具的 `checkPermissions` 代报审批，恢复时带放行标记重新执行
 - 外部调用落 `agent_external_call`，结果只能由**发起人本人**回传（`findPending(tenant, userId, callId)`）
 - 多个调用按 `replyId` 收齐后才恢复模型；过期时间与 HITL 一致
 

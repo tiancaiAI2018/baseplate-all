@@ -98,10 +98,10 @@ npm run dev        # http://127.0.0.1:5173，/api 由 Vite 代理到 8080
 
 关键设计：
 
-- **工具按需加载**：`baseplate.agent.tool-exposure-mode` 三选一，互斥不叠加——`cli`（默认，只常驻 `baseplate`，`find`/`show`/`call`）、`meta`（常驻 `tool_search`/`tool_describe`/`tool_call`）、`direct`（全量直挂，排障用）。数据库里新增的工具自动纳入目录，不需要改代码；外部工具和 `ASK` 工具始终直接暴露，前者必须由浏览器执行，后者必须触发审批
+- **工具按需加载**：`baseplate.agent.tool-exposure-mode` 三选一，互斥不叠加——`cli`（默认，只常驻 `baseplate`，`find`/`show`/`call`）、`meta`（常驻 `tool_search`/`tool_describe`/`tool_call`）、`direct`（全量直挂，排障用）。数据库里新增的工具自动纳入目录，不需要改代码；收敛模式下 `ASK` 与 `EXTERNAL` 工具也不单独占 token，由入口工具在发现后分别触发人工确认与浏览器执行，只有 `direct` 模式才直挂全部 schema
 - **AI 不代签**：同意/驳回/打回不再提供工具，办理由用户在办理抽屉确认；只有必须打开浏览器的创建草稿做成外部工具，`@RequiresPermission`、`@AuditLog` 照常生效
 - **页面作用域**：工具声明 `pages`，运行时不匹配当前 `pageKey` 的 schema 不会进模型上下文；会话继续时同步 `session.page_key`，避免恢复流报 `Tool not found`
-- **HITL**：审批策略为 `ASK` 的工具先落审批单，用户同意后带 `ConfirmResult` 恢复同一会话
+- **HITL**：审批策略为 `ASK` 的工具先落审批单，用户同意后带 `ConfirmResult` 恢复同一会话；CLI/元工具入口会解析脚本里被调用的工具码，命中 `ASK` 时代表它请求确认，命中 `EXTERNAL` 时抛 `ToolSuspendException` 交给前端执行，两条路径都保持与直连模式一致的人工确认与外部执行语义
 - **外部工具结果回传**：前端执行完调用 `/api/agent/external-calls/{callId}/result`，服务端恢复 SSE；多个调用按 `replyId` 收齐后再恢复
 - **UI 卡片**：工具结果可带 `ui: { kind: "task_list" | "workflow_preview", ... }`，服务端转成独立 `ui` 事件，前端渲染任务卡片 / bpmn-js 流程图缩略图；`ui` 会从模型上下文剔除
 - **技能（Skill）**：`baseplate/skills/<名称>/SKILL.md` 由 `SkillIndexService` 扫描、建索引，可在控制台在线编辑 / zip 导入 / 按 Agent 绑定；收敛模式自带「工具检索」/「工具元调用」两个入口技能，由 `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL`（默认 `true`）控制是否把技能正文内置进 system prompt 并挂载，`false` 时只保留简短调用规则

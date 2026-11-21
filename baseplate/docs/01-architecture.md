@@ -191,8 +191,8 @@ rule-fields:
 这比让模型随机调到一个错误实现要好。
 
 工具面对模型保持恒定由 `AgentRuntimeFactory` 负责：`baseplate.agent.tool-exposure-mode` 三选一（`cli` 默认 /
-`meta` / `direct`），内部工具注册进影子 `Toolkit`，主 toolkit 只放入口工具
-（以及必须由浏览器执行的 external、需要人工审批的 `ASK` 工具）。
+`meta` / `direct`），所有工具（含 external 与 `ASK`）都注册进影子 `Toolkit`，主 toolkit 收敛模式下只放入口工具；
+`external` 由入口抛 `ToolSuspendException` 转前端执行，`ASK` 由入口 `checkPermissions` 代报审批，`direct` 模式才直挂全部 schema。
 `ToolDirectory` 按 Agent 绑定、页面、用户权限生成目录并分发执行，
 因此模型收到的工具定义数量与平台工具总数无关，数据库里新增工具也不需要重新装配。
 

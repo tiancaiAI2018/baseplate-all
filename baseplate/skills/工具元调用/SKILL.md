@@ -38,7 +38,7 @@ tool_call {"code": "workflow_list_my_tasks", "arguments": {"limit": 5}}
 ## 边界
 
 - 只执行 `tool_search` 列出来的工具，不要猜 code。
-- `type=external` 的工具由浏览器执行，`approval=ASK` 的工具需要用户确认。对它们的 `tool_call` 会被拒绝并给出提示，按提示直接调用原工具。
+- 当前会话只有三个元工具，不能直连其它工具名。`type=external` 的工具用 `tool_call` 执行时会自动请求浏览器处理，`approval=ASK` 的工具会自动弹出审批单；等前端处理完成再继续，不要改写结果或声称已执行。
 - 返回「缺少权限」时如实告诉用户缺哪个权限点，不要换工具重试。
 - 返回「不能在当前页面使用」时说明该工具不属于当前页面。
 - 工具失败必须如实说明原因，绝不能声称成功。

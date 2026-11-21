@@ -1,8 +1,13 @@
 package com.example.baseplate.agent.tool;
 
+import com.example.baseplate.agent.domain.ApprovalMode;
+import com.example.baseplate.agent.domain.ToolType;
 import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.permission.PermissionContextState;
+import io.agentscope.core.permission.PermissionDecision;
 import io.agentscope.core.tool.ToolBase;
 import io.agentscope.core.tool.ToolCallParam;
+import io.agentscope.core.tool.ToolSuspendException;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -45,7 +50,7 @@ public final class ToolCliTool extends ToolBase {
                         find workflow 流程
                         show workflow_task_detail
                         call workflow_task_detail {"instanceId": 12}
-                        不确定 toolCode 时先 find 再 show。外部工具与需审批工具不能通过 call 执行，按提示直接调用。""")
+                         不确定 toolCode 时先 find 再 show。外部工具与需审批工具同样用 call 执行，入口会自动请求浏览器处理或弹出审批单。""")
                 .inputSchema(Map.of(
                         "type", "object",
                         "properties", Map.of(
@@ -56,6 +61,55 @@ public final class ToolCliTool extends ToolBase {
                 .readOnly(false)
                 .concurrencySafe(true));
         this.directory = directory;
+    }
+
+    @Override
+    public Mono<PermissionDecision> checkPermissions(Map<String, Object> toolInput,
+                                                     PermissionContextState context) {
+        Map<String, Object> ask = askRequest(toolInput);
+        if (ask == null) {
+            return Mono.just(PermissionDecision.passthrough(""));
+        }
+        markAsk(toolInput, ask);
+        return Mono.just(ToolDirectory.askDecision(String.valueOf(ask.get("code"))));
+    }
+
+    private Map<String, Object> askRequest(Map<String, Object> input) {
+        Object raw = input == null ? null : input.get("script");
+        if (!(raw instanceof String script)) {
+            return null;
+        }
+        for (String line : script.split("\\R")) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("call ") && !trimmed.startsWith("invoke ")) {
+                continue;
+            }
+            String rest = trimmed.substring(trimmed.indexOf(' ') + 1).trim();
+            int split = rest.indexOf(' ');
+            String code = split < 0 ? rest : rest.substring(0, split);
+            if (!directory.requiresApproval(code)) {
+                continue;
+            }
+            Map<String, Object> args = Map.of();
+            if (split >= 0) {
+                try {
+                    args = parseArgs(rest.substring(split + 1).trim());
+                } catch (RuntimeException ignored) {
+                }
+            }
+            return Map.of("code", code, "args", args);
+        }
+        return null;
+    }
+
+    private static void markAsk(Map<String, Object> input, Map<String, Object> ask) {
+        if (input == null) {
+            return;
+        }
+        try {
+            input.put(ToolDirectory.ASK_KEY, ask);
+        } catch (RuntimeException ignored) {
+        }
     }
 
     @Override
@@ -105,6 +159,8 @@ public final class ToolCliTool extends ToolBase {
                 case "call", "invoke" -> call(rest, param);
                 default -> CliResult.of("! 未知命令 " + command + "，可用命令: find / show / call");
             };
+        } catch (ToolSuspendException e) {
+            throw e;
         } catch (RuntimeException e) {
             return CliResult.of("! " + command + " 失败: " + e.getMessage());
         }
@@ -180,11 +236,16 @@ public final class ToolCliTool extends ToolBase {
             return CliResult.of("! 工具不存在或当前不可用: " + code + "，先用 find 确认 code");
         }
         ToolDirectory.Entry entry = found.get();
-        if (entry.blocked() != null) {
+        Map<String, Object> args = parseArgs(json);
+        if (entry.type() == ToolType.EXTERNAL) {
+            throw new ToolSuspendException("外部工具 " + entry.code() + " 需要浏览器执行");
+        }
+        boolean approved = Boolean.TRUE.equals(param.getInput().get(ToolDirectory.APPROVED_KEY));
+        if (entry.blocked() != null
+                && !(approved && entry.approval() == ApprovalMode.ASK)) {
             return CliResult.of("! " + entry.code() + " 不可通过 CLI 执行: " + entry.blocked());
         }
-        Map<String, Object> args = parseArgs(json);
-        ToolResultBlock result = directory.invoke(entry, args, param.getRuntimeContext())
+        ToolResultBlock result = directory.invoke(entry, args, param.getRuntimeContext(), approved)
                 .block(CALL_TIMEOUT);
         String text = ToolDirectory.textOf(result);
         if (text == null || text.isBlank()) {

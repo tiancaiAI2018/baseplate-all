@@ -1,8 +1,13 @@
 package com.example.baseplate.agent.tool;
 
+import com.example.baseplate.agent.domain.ApprovalMode;
+import com.example.baseplate.agent.domain.ToolType;
 import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.permission.PermissionContextState;
+import io.agentscope.core.permission.PermissionDecision;
 import io.agentscope.core.tool.ToolBase;
 import io.agentscope.core.tool.ToolCallParam;
+import io.agentscope.core.tool.ToolSuspendException;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -53,6 +58,24 @@ public final class ToolMetaTool extends ToolBase {
 
     public static List<String> codes() {
         return List.of(SEARCH, DESCRIBE, CALL);
+    }
+
+    @Override
+    public Mono<PermissionDecision> checkPermissions(Map<String, Object> toolInput,
+                                                     PermissionContextState context) {
+        if (!CALL.equals(toolCode) || toolInput == null) {
+            return Mono.just(PermissionDecision.passthrough(""));
+        }
+        String code = string(toolInput.get("code"));
+        if (!directory.requiresApproval(code)) {
+            return Mono.just(PermissionDecision.passthrough(""));
+        }
+        try {
+            toolInput.put(ToolDirectory.ASK_KEY,
+                    Map.of("code", code, "args", arguments(toolInput.get("arguments"))));
+        } catch (RuntimeException ignored) {
+        }
+        return Mono.just(ToolDirectory.askDecision(code));
     }
 
     @Override
@@ -113,11 +136,16 @@ public final class ToolMetaTool extends ToolBase {
             return MetaResult.of("! 工具不存在或当前不可用: " + code + "，先用 " + SEARCH + " 确认 code");
         }
         ToolDirectory.Entry entry = found.get();
-        if (entry.blocked() != null) {
+        Map<String, Object> args = arguments(input.get("arguments"));
+        if (entry.type() == ToolType.EXTERNAL) {
+            throw new ToolSuspendException("外部工具 " + entry.code() + " 需要浏览器执行");
+        }
+        boolean approved = Boolean.TRUE.equals(input.get(ToolDirectory.APPROVED_KEY));
+        if (entry.blocked() != null
+                && !(approved && entry.approval() == ApprovalMode.ASK)) {
             return MetaResult.of("! " + entry.code() + " 不可通过入口工具执行: " + entry.blocked());
         }
-        Map<String, Object> args = arguments(input.get("arguments"));
-        ToolResultBlock result = directory.invoke(entry, args, param.getRuntimeContext())
+        ToolResultBlock result = directory.invoke(entry, args, param.getRuntimeContext(), approved)
                 .block(CALL_TIMEOUT);
         String text = ToolDirectory.textOf(result);
         if (text == null || text.isBlank()) {
@@ -138,7 +166,7 @@ public final class ToolMetaTool extends ToolBase {
         return switch (code) {
             case SEARCH -> "检索当前可用的业务工具，返回 code 与用途。不确定工具名时先调用它。";
             case DESCRIBE -> "查看指定业务工具的参数 schema、审批级别与权限点。执行前先确认参数。";
-            default -> "执行业务工具。arguments 必须是 JSON 对象；外部工具与需审批工具会被拒绝并要求直接调用。";
+            default -> "执行业务工具。arguments 必须是 JSON 对象；外部工具与需审批工具也可用本工具执行，会自动请求浏览器处理或弹出审批单。";
         };
     }
 

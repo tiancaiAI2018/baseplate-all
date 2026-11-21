@@ -10,6 +10,8 @@ import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.permission.PermissionBehavior;
+import io.agentscope.core.permission.PermissionDecision;
 import io.agentscope.core.tool.AgentTool;
 import io.agentscope.core.tool.ToolCallParam;
 import io.agentscope.core.tool.Toolkit;
@@ -106,12 +108,27 @@ public final class ToolDirectory {
         return candidates().stream().filter(entry -> entry.code().equals(code)).findFirst();
     }
 
-    /** 执行一个条目。参数与 RuntimeContext 原样透传，保证内部工具仍能拿到 principal/tenant。 */
+    public boolean requiresApproval(String code) {
+        if (code == null || code.isBlank()) {
+            return false;
+        }
+        Entry entry = describe(code).orElse(null);
+        return entry != null && entry.approval() == ApprovalMode.ASK;
+    }
+
+    /** 用户确认后重放入口脚本时，ASK 工具已获授权，可以执行。 */
     public Mono<ToolResultBlock> invoke(Entry entry, Map<String, Object> args, RuntimeContext context) {
+        return invoke(entry, args, context, false);
+    }
+
+    /** 执行一个条目。参数与 RuntimeContext 原样透传，保证内部工具仍能拿到 principal/tenant。 */
+    public Mono<ToolResultBlock> invoke(Entry entry, Map<String, Object> args, RuntimeContext context,
+                                        boolean approved) {
         if (entry == null) {
             return Mono.just(ToolResultBlock.error("工具不存在"));
         }
-        if (entry.blocked() != null) {
+        if (entry.blocked() != null
+                && !(approved && entry.approval() == ApprovalMode.ASK)) {
             return Mono.just(ToolResultBlock.error(entry.code() + " 不可用: " + entry.blocked()));
         }
         CurrentUser user = context == null ? null : context.get("principal");
@@ -138,6 +155,17 @@ public final class ToolDirectory {
                 .runtimeContext(context)
                 .build();
         return tool.callAsync(param);
+    }
+
+    public static final String ASK_KEY = "__baseplate_ask__";
+    public static final String APPROVED_KEY = "__baseplate_approved__";
+
+    public static PermissionDecision askDecision(String code) {
+        return PermissionDecision.builder()
+                .behavior(PermissionBehavior.ASK)
+                .message("工具 " + code + " 需要人工确认后执行")
+                .decisionReason("safety: " + code + " 配置为需人工确认")
+                .build();
     }
 
     /** 把内部工具的 ui 卡片挂到入口工具结果上，否则前端收不到 SSE ui 事件。 */
@@ -213,20 +241,20 @@ public final class ToolDirectory {
 
     private String blocker(ToolDescriptor descriptor, String code) {
         if (descriptor.type() == ToolType.EXTERNAL) {
-            return "外部工具由浏览器执行，请直接调用 " + code;
+            return "外部工具由浏览器执行，用 CLI call 执行即可自动请求前端处理";
         }
         if (approval(code) == ApprovalMode.ASK) {
-            return "该工具需要人工确认，请直接调用 " + code + " 触发审批";
+            return "该工具需要人工确认，用 CLI call 执行即可自动弹出审批单";
         }
         return null;
     }
 
     private String blocker(AgentDefinitionRepository.ToolCatalogRow row, String code) {
         if (row.toolType() == ToolType.EXTERNAL) {
-            return "外部工具由浏览器执行，请直接调用 " + code;
+            return "外部工具由浏览器执行，用 CLI call 执行即可自动请求前端处理";
         }
         if (approval(code) == ApprovalMode.ASK) {
-            return "该工具需要人工确认，请直接调用 " + code + " 触发审批";
+            return "该工具需要人工确认，用 CLI call 执行即可自动弹出审批单";
         }
         return null;
     }
