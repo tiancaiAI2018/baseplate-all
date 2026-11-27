@@ -9,6 +9,7 @@
 | `AgentAssistant.vue` | 悬浮助手入口，按 `pageKey` 绑定可用 Agent |
 | `AgentBlocksView.vue` | 按 block `type` 渲染文本/工具/审批/跳转/UI 卡片 |
 | `AgentBpmnCard.vue` | `kind=workflow_preview` 的 bpmn-js 缩略图 |
+| `AgentChartCard.vue` / `AgentDataTableCard.vue` | 数据助手的 `kind=chart` 柱状图 / `kind=table` 表格，纯 CSS/SVG、无额外图表依赖 |
 | `AgentInstanceProgress.vue` / `AgentMarkdown.vue` | 进度卡、Markdown |
 | `SchemaFieldEditor.vue` + `schemaField.ts` | 节点配置字段编辑 |
 | `formRuleBuilder.ts` | 表单规则构造 |

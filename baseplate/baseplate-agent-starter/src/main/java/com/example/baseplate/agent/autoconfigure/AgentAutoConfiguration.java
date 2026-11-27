@@ -11,6 +11,8 @@ import com.example.baseplate.agent.adapter.out.persistence.AgentSessionRepositor
 import com.example.baseplate.agent.adapter.out.persistence.AgentSkillIndexRepository;
 import com.example.baseplate.agent.application.AgentChatService;
 import com.example.baseplate.agent.application.AgentConfigService;
+import com.example.baseplate.agent.application.AgentContextService;
+import com.example.baseplate.agent.tool.ExternalServiceToolProvider;
 import com.example.baseplate.agent.application.AgentObserveService;
 import com.example.baseplate.agent.application.AgentSessionService;
 import com.example.baseplate.agent.application.SkillIndexService;
@@ -21,11 +23,14 @@ import com.example.baseplate.agent.tool.AgentToolProvider;
 import com.example.baseplate.agent.tool.PlatformToolProvider;
 import com.example.baseplate.agent.tool.ToolRegistry;
 import com.example.baseplate.api.port.out.CurrentUserProvider;
+import com.example.baseplate.api.port.out.ExternalServiceGateway;
+import com.example.baseplate.api.port.out.ExternalToolDescriptorProvider;
 import com.example.baseplate.security.autoconfigure.SecurityAutoConfiguration;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.extensions.postgresql.state.PostgresAgentStateStore;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -125,11 +130,18 @@ public class AgentAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ToolRegistry agentToolRegistry(ObjectProvider<AgentToolProvider> providers) {
+    public ToolRegistry agentToolRegistry(ObjectProvider<AgentToolProvider> providers,
+                                           ObjectProvider<ExternalToolDescriptorProvider> descriptorProviders,
+                                           ObjectProvider<ExternalServiceGateway> gateways) {
         List<AgentToolProvider> all = new ArrayList<>();
         providers.orderedStream().forEach(all::add);
         // 平台只读工具是模块自带能力，不依赖其它 starter
         all.add(new PlatformToolProvider());
+        // 平台注册表中的外部服务端点投影成 Agent 工具
+        ExternalServiceGateway gateway = gateways.getIfAvailable();
+        if (gateway != null) {
+            all.add(new ExternalServiceToolProvider(descriptorProviders, gateway));
+        }
         return new ToolRegistry(all);
     }
 
@@ -137,6 +149,18 @@ public class AgentAutoConfiguration {
     @ConditionalOnMissingBean
     public ModelProviderFactory agentModelProviderFactory(AgentProperties properties) {
         return new ModelProviderFactory(properties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AgentContextService agentContextService(AgentStateStore stateStore,
+                                                   AgentDefinitionRepository repository,
+                                                   AgentSessionRepository sessions,
+                                                   ModelProviderFactory modelFactory,
+                                                   AgentRuntimeFactory runtimeFactory,
+                                                   AgentProperties properties) {
+        return new AgentContextService(stateStore, repository, sessions, modelFactory,
+                runtimeFactory, properties);
     }
 
     @Bean
@@ -155,12 +179,14 @@ public class AgentAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public AgentConfigService agentConfigService(AgentDefinitionRepository repository,
+                                                 AgentSessionRepository sessions,
+                                                 PlatformTransactionManager transactionManager,
                                                  ToolRegistry toolRegistry,
                                                  AgentRuntimeFactory runtimeFactory,
                                                  AgentProperties properties,
                                                  SkillIndexService skillIndexService) {
-        return new AgentConfigService(repository, toolRegistry, runtimeFactory, properties,
-                skillIndexService);
+        return new AgentConfigService(repository, sessions, transactionManager, toolRegistry,
+                runtimeFactory, properties, skillIndexService);
     }
 
     @Bean
@@ -191,7 +217,7 @@ public class AgentAutoConfiguration {
                                              AgentExternalCallRepository externalCallRepository,
                                              AgentRuntimeFactory runtimeFactory,
                                              ToolRegistry toolRegistry,
-                                             AgentProperties properties) {
+                                              AgentProperties properties) {
         return new AgentChatService(definitionRepository, sessionRepository, messageRepository,
                 runRepository, hitlRepository, externalCallRepository, runtimeFactory,
                 toolRegistry, properties);

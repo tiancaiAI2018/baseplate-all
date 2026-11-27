@@ -755,6 +755,9 @@ public final class AgentChatService {
                                         ChatCommand command) {
         if (command.sessionId() != null) {
             return sessions.findOwned(tenant, userId, command.sessionId())
+                    // 会话必须属于当前智能体：页面切换后前端可能还带着上一个 Agent 的
+                    // sessionId，直接复用会把新 Agent 的工具集套到旧会话上下文上
+                    .filter(session -> session.agentId() == agent.id())
                     .map(session -> syncPageKey(tenant, session, command.pageKey()))
                     .orElseGet(() -> newSession(tenant, userId, agent, command.pageKey()));
         }
@@ -847,6 +850,8 @@ public final class AgentChatService {
                 enabled.add(binding.toolCode());
             }
         }
+        log.debug("工具选择 agent={} page={} bindings={} enabledCount={} enabled={}",
+                agent.id(), pageKey, bindings.size(), enabled.size(), enabled);
         return new ToolSelection(enabled, policies);
     }
 

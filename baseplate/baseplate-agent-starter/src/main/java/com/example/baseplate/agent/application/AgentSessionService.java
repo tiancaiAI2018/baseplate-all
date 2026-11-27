@@ -8,6 +8,7 @@ import com.example.baseplate.api.exception.ForbiddenException;
 import com.example.baseplate.api.model.CurrentUser;
 
 import java.util.List;
+import java.util.Map;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -57,6 +58,16 @@ public final class AgentSessionService {
                 row.id(), row.seq(), row.role(), row.content(),
                 parseBlocks(row.blocksJson()), row.model(), row.latencyMs(), row.createdAt(),
                 row.feedback())).toList();
+    }
+
+    /** 观测/导出用：最后一条助手回复，补到合并请求末尾。 */
+    String latestAssistantContent(long sessionId) {
+        return messages.latestAssistantContent(sessionId).orElse(null);
+    }
+
+    /** 观测/导出用（批量）：多个会话各自的最后一条助手回复。 */
+    Map<Long, String> latestAssistantContents(List<Long> sessionIds) {
+        return messages.latestAssistantContents(sessionIds);
     }
 
     /**

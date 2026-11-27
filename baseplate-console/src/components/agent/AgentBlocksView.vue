@@ -41,6 +41,8 @@
       </el-tag>
       <AgentBpmnCard v-else-if="block.type === 'ui' && block.kind === 'workflow_preview'"
                      :xml="block.bpmnXml || ''" :title="block.title" />
+      <AgentChartCard v-else-if="block.type === 'ui' && block.kind === 'chart'" :block="block" />
+      <AgentDataTableCard v-else-if="block.type === 'ui' && block.kind === 'table'" :block="block" />
       <div v-else-if="block.type === 'ui'" class="ui-card">
         <div class="ui-head">{{ block.title || block.label || '页面指令' }}
           <el-tag size="small" effect="plain">{{ block.kind || 'ui' }}</el-tag>
@@ -59,6 +61,8 @@
 import { CircleCheck, CircleClose, Tools } from '@element-plus/icons-vue'
 import AgentMarkdown from './AgentMarkdown.vue'
 import AgentBpmnCard from './AgentBpmnCard.vue'
+import AgentChartCard from './AgentChartCard.vue'
+import AgentDataTableCard from './AgentDataTableCard.vue'
 
 defineProps<{ blocks: Array<Record<string, any>> }>()
 

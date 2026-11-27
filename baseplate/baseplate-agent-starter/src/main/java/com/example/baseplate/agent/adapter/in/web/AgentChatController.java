@@ -56,7 +56,7 @@ public class AgentChatController {
         CurrentUser user = currentUser.current();
         try {
             AgentDefinition agent = chatService.resolveAgent(tenant(user), null, pageKey);
-            return Map.of("enabled", true, "agentCode", agent.agentCode(),
+            return Map.of("enabled", true, "agentId", agent.id(), "agentCode", agent.agentCode(),
                     "agentName", agent.name(), "pageKey", pageKey);
         } catch (RuntimeException e) {
             return Map.of("enabled", false, "pageKey", pageKey);

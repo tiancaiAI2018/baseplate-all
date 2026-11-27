@@ -1,6 +1,7 @@
 package com.example.baseplate.agent.application;
 
 import com.example.baseplate.agent.adapter.out.persistence.AgentDefinitionRepository;
+import com.example.baseplate.agent.adapter.out.persistence.AgentSessionRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentDefinitionRepository.CustomToolInput;
 import com.example.baseplate.agent.adapter.out.persistence.AgentDefinitionRepository.DefinitionInput;
 import com.example.baseplate.agent.adapter.out.persistence.AgentDefinitionRepository.ToolBinding;
@@ -18,6 +19,8 @@ import com.example.baseplate.api.exception.BaseplateException;
 import com.example.baseplate.runtime.crypto.AesGcmCipher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -45,15 +48,20 @@ public final class AgentConfigService {
             """;
 
     private final AgentDefinitionRepository repository;
+    private final AgentSessionRepository sessions;
+    private final TransactionTemplate transaction;
     private final ToolRegistry toolRegistry;
     private final AgentRuntimeFactory runtimeFactory;
     private final AgentProperties properties;
     private final SkillIndexService skillIndexService;
 
-    public AgentConfigService(AgentDefinitionRepository repository, ToolRegistry toolRegistry,
-                              AgentRuntimeFactory runtimeFactory, AgentProperties properties,
-                              SkillIndexService skillIndexService) {
+    public AgentConfigService(AgentDefinitionRepository repository, AgentSessionRepository sessions,
+                              PlatformTransactionManager transactionManager,
+                              ToolRegistry toolRegistry, AgentRuntimeFactory runtimeFactory,
+                              AgentProperties properties, SkillIndexService skillIndexService) {
         this.repository = repository;
+        this.sessions = sessions;
+        this.transaction = new TransactionTemplate(transactionManager);
         this.toolRegistry = toolRegistry;
         this.runtimeFactory = runtimeFactory;
         this.properties = properties;
@@ -200,7 +208,11 @@ public final class AgentConfigService {
     }
 
     public void delete(String tenant, long id) {
-        repository.delete(tenant, id);
+        transaction.executeWithoutResult(status -> {
+            repository.deleteDependents(tenant, id);
+            sessions.deleteByAgent(tenant, id);
+            repository.delete(tenant, id);
+        });
         runtimeFactory.invalidate(id);
     }
 

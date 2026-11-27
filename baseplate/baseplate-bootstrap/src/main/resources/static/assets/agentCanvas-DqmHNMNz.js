@@ -1,0 +1,1 @@
+const r=new Map;function n(e,a){return r.set(e,a),()=>{r.get(e)===a&&r.delete(e)}}async function s(e){const a=r.get(e);if(!a)return{available:!1,error:"当前页面没有可读取的画布"};try{return await a()}catch(t){return{available:!1,error:(t==null?void 0:t.message)||"读取画布失败"}}}export{n as a,s as r};

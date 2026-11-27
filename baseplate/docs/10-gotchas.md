@@ -579,6 +579,71 @@ bpmn-js 抛 `SVGMatrix ... non-finite`。
 
 **做法**：先看页面 key 是否写对，再看用户权限点，最后看控制台「智能体配置 → 工具」里的启停与审批策略。
 
+### 60. 删除智能体 500：会话表外键没级联
+
+**现象**：`DELETE /api/agent/definitions/{id}` 返回 500，后端日志是
+`violates foreign key constraint "agent_session_agent_id_fkey"`。
+
+**根因**：`agent_definition_tool` / `agent_definition_skill` 有 `ON DELETE CASCADE`，
+但 `agent_session`、`agent_hitl_request` 引用 `agent_definition(id)` 时没写级联，
+`agent_external_call.agent_id` 甚至没有外键。Agent 只要被用过就删不掉。
+
+**做法**：`AgentConfigService.delete` 在一个事务里按序清理：先删该 Agent 的
+HITL / 外部调用，再删会话（会话下的消息、run、模型调用由 `session_id` 级联），
+最后删定义。不要只 catch 异常转 409，数据仍然删不掉。
+
+### 61. 上下文压缩只删 `agent_message` 不生效
+
+**现象**：手动压缩后业务表历史变短了，但模型下一轮仍然"记得"压缩前的内容，token 没降。
+
+**根因**：模型上下文来自 agentscope 的 `AgentStateStore`（key `agent_state`，
+表 `agentscope.agentscope_sessions`），业务表 `agent_message` 只用于前端回放。
+而且 `ReActAgent` 有内存 `stateCache`，只改库不清缓存也会被覆盖。
+
+**做法**：压缩直接改写 `AgentState.context`（摘要消息 + 最近 N 条）。
+算法直接用 AgentScope 官方 harness 的 `ConversationCompactor` /
+`CompactionMiddleware`（自带工具结果裁剪、参数截断、安全截断点与摘要 prompt；
+`TokenCounterUtil` 统一 token 口径）；自动压缩挂中间件，由 ReActAgent 自己的
+`saveStateToSession` 做 CAS 持久化；手动接口仍需 `saveIfVersion` 写回，
+并 `runtimeFactory.invalidate(agentId)` 清实例与 stateCache。
+工作区相关能力（长期记忆抽取、原始消息落盘）在平台关闭：没有 harness 工作区目录，
+`MemoryFlushManager` 传 `null` 即可，但 `flushBeforeCompact/offloadBeforeCompact` 必须为 `false`。
+
+### 62. 关掉的工具还能被 `find` 到：会话跨智能体复用
+
+**现象**：在智能体配置页把 workflow 工具全部停用，对话里 `find` 仍然能列出
+`workflow_list_my_tasks` 等工具，工具策略看起来没生效。
+
+**根因**：页面切换后前端 `bootstrap` 更新了 `agentCode`，但 `sessionId` 还指向上一个
+Agent 的会话。后端 `resolveSession` 只校验会话属于当前用户、不校验 `agentId`，
+于是用新 Agent 的工具配置 + 旧会话的上下文继续对话。日志里表现为同一会话两次请求
+注册的工具集不同（一次只有数据工具，一次带全部 workflow 工具）。
+
+**做法**：`resolveSession` 增加 `session.agentId() == agent.id()` 校验，不匹配时新建会话；
+前端 `bootstrap` 检测 `agentCode` 变化时清空 `sessionId/messages`，
+历史列表点选其他 Agent 的会话时提示「该会话属于其他智能体，请新建对话」。
+
+### 63. 观测详情 1.5MB / 3 秒：把每次调用的完整请求体全返回
+
+**现象**：`GET /api/agent/observe/sessions/{id}` 打开一个 30 轮的会话要 2~3 秒，
+响应 1.5MB；导出全部会话更慢。
+
+**根因**：`agent_model_call.request` 是累积请求体——第 N 次调用包含前 N-1 次的全部
+messages，体积随轮次近似平方增长。详情接口返回了全部 31 份原始请求体（1.1MB），
+又额外返回一份合并请求；前端其实只用 `modelCalls.length` 和合并后的那一份。
+远程库单次读取 1.1MB JSONB 实测就接近 3 秒。
+
+**做法**：详情只返回 `modelCallCount` 与「消息最多的一份」合并请求（`ORDER BY
+jsonb_array_length(request->'messages') DESC LIMIT 1`），不再返回逐次原始请求；
+导出用批量 `DISTINCT ON (session_id)` 取每个会话的最宽请求并流式写出；
+`server.compression` 对 JSON 开启 gzip。同一会话从 1.5MB/2.8s 降到约 100KB/200ms。
+
+**追加坑**：导出改成 `StreamingResponseBody` 后，下载文件只有 1 字节 `[`。
+`CachedResponseFilter` 用 `ContentCachingResponseWrapper` 包住所有响应，主线程
+`chain.doFilter` 返回时就 `copyBodyToResponse()` 提交了响应并写死 `Content-Length`，
+异步线程后续写出的内容全部丢失。流式端点必须加进 `STREAMING_PATHS` 跳过列表：
+SSE 和导出都要，不能只写 SSE。
+
 ---
 
 ## 十、通用经验

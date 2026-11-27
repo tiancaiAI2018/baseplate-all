@@ -115,7 +115,7 @@
         </el-collapse>
 
         <el-collapse class="runs-collapse">
-          <el-collapse-item :title="`模型请求（共 ${detail.modelCalls?.length || 0} 次调用，已合并为一份完整内容）`"
+          <el-collapse-item :title="`模型请求（共 ${detail.modelCallCount} 次调用，已合并为一份完整内容）`"
                             name="calls">
             <div class="call-toolbar">
               <el-radio-group v-model="viewMode" size="small">
@@ -123,7 +123,7 @@
                 <el-radio-button value="json">JSON</el-radio-button>
               </el-radio-group>
               <span class="hint">
-                请求体是累积的，逐次展示会重复；这里只保留最完整的一份（导出仍按原始每次调用输出）
+                请求体是累积的，逐次展示会重复；这里只保留最完整的一份，导出也是这份合并后的请求
               </span>
             </div>
 
@@ -156,7 +156,7 @@
             <pre v-show="viewMode === 'json' && Object.keys(detail.mergedRequest || {}).length"
                  class="call-json">{{ prettyValue(detail.mergedRequest) }}</pre>
 
-            <el-empty v-if="!detail.modelCalls?.length"
+            <el-empty v-if="!detail.modelCallCount"
                       description="没有模型调用记录（旧会话未采集）" :image-size="50" />
           </el-collapse-item>
           <el-collapse-item :title="`逐轮指标（${detail.runs.length}）`" name="runs">
@@ -225,9 +225,8 @@ interface ObserveSessionRow {
 interface SessionDetail {
   session: ObserveSessionRow
   systemPrompt?: string
-  messages: Array<Record<string, any>>
+  modelCallCount: number
   runs: Array<Record<string, any>>
-  modelCalls: Array<Record<string, any>>
   mergedRequest: Record<string, any>
 }
 
@@ -318,7 +317,7 @@ async function openDetail(row: ObserveSessionRow) {
 /**
  * 导出完整 JSON（blob 下载，不能 window.open：要带 Authorization 头）。
  * scope=all 全租户；scope=filtered 按当前筛选条件。
- * 每个会话：元数据 + calls（每次实际发给模型的 OpenAI 风格请求体）。
+ * 每个会话：元数据 + request（合并后的完整请求体，含最终回复，与详情 JSON 视图一致）。
  */
 async function exportJson(scope: 'all' | 'filtered') {
   exporting.value = true

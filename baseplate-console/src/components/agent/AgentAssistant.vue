@@ -8,11 +8,19 @@
             <div>
               <div class="name">{{ agent.agentName || 'AI 助手' }}</div>
               <div class="sub">{{ route.meta.title || '当前页面' }}</div>
+              <div v-if="contextUsage" class="ctx-usage">
+                <span>上下文 {{ contextUsage.percent }}%</span>
+                <el-progress :percentage="contextUsage.percent" :show-text="false" :stroke-width="4"
+                             :color="contextUsage.percent >= 80 ? '#f56c6c' : '#409eff'" />
+              </div>
             </div>
           </div>
           <div class="actions">
             <el-button text circle title="历史会话" @click="showHistory = !showHistory">
               <el-icon><Clock /></el-icon>
+            </el-button>
+            <el-button text circle title="压缩上下文" @click="compactContext" :loading="compacting">
+              <el-icon><MagicStick /></el-icon>
             </el-button>
             <el-button text circle title="新对话" @click="startNew">
               <el-icon><Plus /></el-icon>
@@ -144,6 +152,8 @@
                       </div>
                     </div>
                   </template>
+                  <AgentChartCard v-else-if="block.type === 'ui' && block.kind === 'chart'" :block="block" />
+                  <AgentDataTableCard v-else-if="block.type === 'ui' && block.kind === 'table'" :block="block" />
                   <div v-else-if="block.type === 'ui'" class="ui-card">
                     <div class="ui-text">{{ block.label || 'AI 已准备好下一步' }}</div>
                     <el-button size="small" type="primary" @click="openUi(block)">打开</el-button>
@@ -209,13 +219,16 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatDotRound, CircleCheck, CircleClose, Clock, Close, Plus, Tools } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheck, CircleClose, Clock, Close, MagicStick, Plus, Tools } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useAgentStore } from '../../stores/agent'
 import { registerAgentExternalTool } from '../../api/agentExternal'
 import { readAgentCanvas } from '../../api/agentCanvas'
 import http from '../../api/client'
 import AgentMarkdown from './AgentMarkdown.vue'
 import AgentBpmnCard from './AgentBpmnCard.vue'
+import AgentChartCard from './AgentChartCard.vue'
+import AgentDataTableCard from './AgentDataTableCard.vue'
 import AgentInstanceProgress from './AgentInstanceProgress.vue'
 import InstanceDetailDrawer from '../InstanceDetailDrawer.vue'
 import { buildFormArtifacts, FIELD_NAME_PATTERN, normalizeAiFields } from './formRuleBuilder'
@@ -449,6 +462,38 @@ registerAgentExternalTool('form_get_canvas', async () => {
  */
 
 const agent = useAgentStore()
+const contextUsage = ref<{ estimatedTokens: number; contextWindow: number; percent: number } | null>(null)
+const compacting = ref(false)
+
+async function refreshContextUsage() {
+  if (!agent.sessionId) {
+    contextUsage.value = null
+    return
+  }
+  try {
+    const { data } = await http.get(`/api/agent/sessions/${agent.sessionId}/context-usage`)
+    contextUsage.value = data
+  } catch {
+    contextUsage.value = null
+  }
+}
+
+async function compactContext() {
+  if (!agent.sessionId) {
+    ElMessage.warning('先发一条消息再压缩上下文')
+    return
+  }
+  compacting.value = true
+  try {
+    const { data } = await http.post(`/api/agent/sessions/${agent.sessionId}/compact`, null)
+    ElMessage.success(`已压缩上下文：${data.beforeTokens} → ${data.afterTokens} tokens`)
+    await refreshContextUsage()
+  } catch (error) {
+    ElMessage.error(pickErrorDetail(error, '压缩上下文失败'))
+  } finally {
+    compacting.value = false
+  }
+}
 const draft = ref('')
 const showHistory = ref(false)
 const listRef = ref<HTMLElement | null>(null)
@@ -484,6 +529,13 @@ watch(
   { deep: false }
 )
 
+watch(
+  () => [agent.sessionId, agent.streaming],
+  ([sessionId, streaming]) => {
+    if (sessionId && !streaming) void refreshContextUsage()
+  }
+)
+
 function scrollToBottom() {
   nextTick(() => {
     if (listRef.value) {
@@ -506,8 +558,12 @@ function startNew() {
 
 async function pickSession(sessionId: number) {
   showHistory.value = false
-  await agent.continueSession(sessionId)
-  scrollToBottom()
+  try {
+    await agent.continueSession(sessionId)
+    scrollToBottom()
+  } catch (error: any) {
+    ElMessage.warning(error?.message || '会话加载失败')
+  }
 }
 
 /** 工具参数只做展示，超长截断，避免把一整段 BPMN/JSON 撑爆气泡。 */
@@ -607,6 +663,17 @@ function externalStatusText(status?: string) {
 .sub {
   font-size: 11px;
   color: var(--bp-muted);
+}
+.ctx-usage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--bp-muted);
+}
+.ctx-usage :deep(.el-progress) {
+  width: 70px;
 }
 .actions :deep(.el-button) {
   margin-left: 2px;

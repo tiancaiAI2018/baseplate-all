@@ -124,6 +124,20 @@
         </el-row>
         <el-row :gutter="14">
           <el-col :span="12">
+            <el-form-item label="最大循环次数">
+              <el-input-number v-model="form.maxIters" :min="1" :max="1000" :disabled="form.unlimitedIters"
+                               controls-position="right" style="width: 100%" />
+              <div class="hint">ReAct 最多执行多少轮工具调用；勾选不限次数则直到模型自行结束。</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="循环上限">
+              <el-checkbox v-model="form.unlimitedIters">不限次数（无限循环）</el-checkbox>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="14">
+          <el-col :span="12">
             <el-form-item label="思考深度">
               <el-select v-model="form.reasoningEffort" style="width: 100%" clearable
                          placeholder="默认">
@@ -299,6 +313,23 @@
             <el-radio value="EXTERNAL">外部工具（前端执行）</el-radio>
             <el-radio value="CUSTOM_INTERNAL">内部 HTTP（服务端执行）</el-radio>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="platformTools.length" label="平台注册端点">
+          <div class="hint">
+            以下端点已由开发平台注册并保管凭证，会自动投影成 Agent 工具；无需在页面填写 URL 或密钥。
+          </div>
+          <el-table :data="platformTools" size="small" style="width: 100%; margin-top: 6px">
+            <el-table-column prop="code" label="工具编码" min-width="140" />
+            <el-table-column prop="name" label="名称" min-width="130" />
+            <el-table-column label="执行方式" width="120">
+              <template #default="{ row }">
+                <el-tag :type="row.readonly ? 'success' : 'warning'" size="small">
+                  {{ row.readonly ? '服务端只读' : '前端执行' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="serviceCode" label="服务" min-width="110" />
+          </el-table>
         </el-form-item>
         <el-row v-if="toolForm.toolType === 'CUSTOM_INTERNAL'" :gutter="14">
           <el-col :span="16">
@@ -489,7 +520,7 @@ import {
   type AgentSkillBindingView,
   type AgentToolView
 } from '../api/agent'
-import { errorText } from '../api/client'
+import http, { errorText } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import SchemaFieldEditor from '../components/agent/SchemaFieldEditor.vue'
 import {
@@ -550,6 +581,8 @@ const form = reactive({
   systemPrompt: '',
   contextWindow: 1000000,
   maxOutputTokens: 4096,
+  maxIters: 10,
+  unlimitedIters: false,
   reasoningEffort: 'low' as string,
   temperature: 0.3 as number | '',
   pages: ['*'] as string[],
@@ -596,6 +629,7 @@ const toolDirectory = ref<any[]>([])
 const toolFormVisible = ref(false)
 const toolSaving = ref(false)
 const toolEditing = ref<string | null>(null)
+const platformTools = ref<any[]>([])
 const schemaMode = ref<'visual' | 'json'>('visual')
 const schemaParams = ref<SchemaNode[]>([])
 const toolForm = reactive({
@@ -639,6 +673,8 @@ function resetForm() {
     systemPrompt: '',
     contextWindow: 1000000,
     maxOutputTokens: 4096,
+    maxIters: 10,
+    unlimitedIters: false,
     reasoningEffort: 'low',
     temperature: 0.3,
     pages: ['*'],
@@ -666,6 +702,8 @@ function openEdit(row: AgentDefinitionView) {
     systemPrompt: row.systemPrompt || '',
     contextWindow: Number(params.contextWindow || 1000000),
     maxOutputTokens: Number(params.maxOutputTokens || 4096),
+    maxIters: Number(params.maxIters) > 0 ? Number(params.maxIters) : 10,
+    unlimitedIters: Number(params.maxIters) < 0,
     reasoningEffort: params.reasoningEffort || '',
     temperature: params.temperature === undefined ? '' : Number(params.temperature),
     pages: [...(row.allowedPages || [])],
@@ -683,7 +721,8 @@ async function save() {
   try {
     const params: Record<string, any> = {
       contextWindow: form.contextWindow,
-      maxOutputTokens: form.maxOutputTokens
+      maxOutputTokens: form.maxOutputTokens,
+      maxIters: form.unlimitedIters ? -1 : form.maxIters
     }
     if (form.reasoningEffort) params.reasoningEffort = form.reasoningEffort
     if (form.temperature !== '' && form.temperature !== null) params.temperature = form.temperature
@@ -902,7 +941,17 @@ async function refreshToolDirectory() {
   }
 }
 
+async function loadPlatformTools() {
+  try {
+    const { data } = await http.get('/api/integration/proxy/services')
+    platformTools.value = Array.isArray(data) ? data : []
+  } catch {
+    platformTools.value = []
+  }
+}
+
 function openCreateTool() {
+  void loadPlatformTools()
   toolEditing.value = null
   Object.assign(toolForm, {
     toolCode: '',
@@ -924,6 +973,7 @@ function openCreateTool() {
 }
 
 function editTool(row: any) {
+  void loadPlatformTools()
   toolEditing.value = row.toolCode
   const schema = row.paramsSchema || { type: 'object', properties: {} }
   Object.assign(toolForm, {

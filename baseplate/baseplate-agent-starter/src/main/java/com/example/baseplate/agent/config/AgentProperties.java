@@ -22,6 +22,12 @@ public class AgentProperties {
     private ToolExposureMode toolExposureMode = ToolExposureMode.CLI;
     /** 收敛模式下是否自动挂载入口技能（教模型如何使用 find/show/call 或元工具）。 */
     private boolean toolExposureSkill = true;
+    /** 是否自动压缩会话上下文（超过阈值时生成摘要，保留最近 N 条）。 */
+    private boolean compactionEnabled = true;
+    /** 自动压缩触发阈值：估算上下文占用百分比，默认 80。 */
+    private int compactionThreshold = 80;
+    /** 压缩后保留的最近消息条数。 */
+    private int compactionKeepMessages = 20;
     /** 整条 SSE 流的最长等待时间（秒），与 SseEmitter 超时同源。 */
     private long streamTimeoutSeconds = 120;
     /** HITL 审批单有效期（秒）；过期后必须重新发起对话。 */
@@ -85,6 +91,30 @@ public class AgentProperties {
 
     public void setToolExposureSkill(boolean toolExposureSkill) {
         this.toolExposureSkill = toolExposureSkill;
+    }
+
+    public boolean isCompactionEnabled() {
+        return compactionEnabled;
+    }
+
+    public void setCompactionEnabled(boolean compactionEnabled) {
+        this.compactionEnabled = compactionEnabled;
+    }
+
+    public int getCompactionThreshold() {
+        return compactionThreshold;
+    }
+
+    public void setCompactionThreshold(int compactionThreshold) {
+        this.compactionThreshold = compactionThreshold;
+    }
+
+    public int getCompactionKeepMessages() {
+        return compactionKeepMessages;
+    }
+
+    public void setCompactionKeepMessages(int compactionKeepMessages) {
+        this.compactionKeepMessages = compactionKeepMessages;
     }
 
     public long getStreamTimeoutSeconds() {

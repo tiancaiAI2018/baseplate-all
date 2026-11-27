@@ -30,6 +30,9 @@
             <el-option v-for="role in options.roles || []" :key="role.code"
                        :label="role.name" :value="role.code" />
           </el-select>
+          <span v-else-if="config.assigneeType === 'DISPATCH'" class="hint">
+            由下方分单策略决定派给谁，这里不再手工指定用户
+          </span>
           <el-input v-else v-model="config.assigneeValue"
                     :placeholder="valueHint(config.assigneeType)" />
         </el-form-item>
@@ -39,6 +42,54 @@
                        :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
+
+        <template v-if="config.nodeType === 'userTask' && config.assigneeType === 'DISPATCH'">
+          <div class="sub-title">分单策略</div>
+          <el-form-item label="分单池">
+            <el-select v-model="dispatch.poolId" filterable clearable placeholder="选择组织池" style="width: 100%">
+              <el-option v-for="pool in dispatchOptions.pools || []" :key="pool.id"
+                         :label="`${pool.name}（${pool.code}）`" :value="pool.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="分配模式">
+            <el-radio-group v-model="dispatch.mode" size="small">
+              <el-radio-button value="AUTO">自动派单</el-radio-button>
+              <el-radio-button value="CLAIM">抢单</el-radio-button>
+              <el-radio-button value="MIXED">自动 + 抢单</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="主算法">
+            <el-select v-model="dispatch.algorithm" style="width: 100%">
+              <el-option v-for="item in dispatchOptions.algorithms || []" :key="item"
+                         :label="algorithmLabel(item)" :value="item" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="候选门槛">
+            <el-checkbox v-model="dispatch.requireCheckin">必须签到</el-checkbox>
+            <el-checkbox v-model="dispatch.requireOnline">必须在线</el-checkbox>
+          </el-form-item>
+          <el-form-item label="拒绝策略">
+            <div class="dispatch-line">
+              <span class="hint">拒绝后冷却</span>
+              <el-input-number v-model="dispatch.cooldownMinutes" :min="0" :max="1440" size="small" />
+              <span class="hint">分钟</span>
+            </div>
+            <div class="dispatch-line">
+              <span class="hint">连续拒绝</span>
+              <el-input-number v-model="dispatch.escalateAfter" :min="0" :max="20" size="small" />
+              <span class="hint">次后升级通知</span>
+            </div>
+          </el-form-item>
+          <div class="button-row">
+            <el-button size="small" type="primary" :loading="savingDispatch" @click="saveDispatchPolicy">
+              保存分单策略
+            </el-button>
+            <el-button size="small" @click="loadDispatchPolicies">刷新</el-button>
+          </div>
+          <div class="hint field-tip">
+            分单策略独立于节点配置保存，按流程版本生效；部署后无需重新保存。
+          </div>
+        </template>
         <el-form-item v-if="isMulti(config)" label="通过比例">
           <el-input-number v-model="config.signRatio" :min="1" :max="100" />
           <span class="hint" style="margin-left: 8px">% 的成员同意即通过</span>
@@ -188,6 +239,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import http from '../api/client'
+import { dispatchApi } from '../api/workflowDispatch'
 
 const props = defineProps<{ modeler: any; processKey?: string }>()
 const nodes = ref<any[]>([])
@@ -201,6 +253,132 @@ const conditionMode = ref<'STRUCTURED' | 'EXPRESSION'>('STRUCTURED')
 const conditionExpression = ref('')
 const rejectRoute = ref(false)
 const store = new Map<string, any>()
+
+// ---------- 分单策略 ----------
+// 分单是独立域：节点只声明 assigneeType=DISPATCH，池/模式/算法/拒绝策略存在 wf_dispatch_policy。
+// 这里按 definitionVersion=0（草稿）保存，部署后按版本精确覆盖；版本没配就回退到 0。
+const dispatchOptions = ref<any>({})
+const dispatchPolicies = ref<any[]>([])
+const savingDispatch = ref(false)
+const dispatch = reactive({
+  poolId: null as number | null,
+  mode: 'AUTO',
+  algorithm: 'LEAST_LOAD',
+  requireCheckin: true,
+  requireOnline: false,
+  cooldownMinutes: 30,
+  escalateAfter: 3
+})
+
+function algorithmLabel(value: string) {
+  const labels: Record<string, string> = {
+    LEAST_LOAD: '负载最低优先', RATING: '评分优先', FAIR: '最近派单少优先',
+    SKILL: '技能匹配优先', WEIGHT: '权重优先'
+  }
+  return `${labels[value] || value}（${value}）`
+}
+
+async function loadDispatchOptions() {
+  try {
+    dispatchOptions.value = await dispatchApi.options()
+  } catch (error) {
+    console.error('[NodeConfigPanel] 分单可选项加载失败', error)
+    dispatchOptions.value = {
+      pools: [],
+      algorithms: ['LEAST_LOAD', 'RATING', 'FAIR', 'SKILL', 'WEIGHT']
+    }
+  }
+}
+
+async function loadDispatchPolicies() {
+  if (!props.processKey) return
+  try {
+    dispatchPolicies.value = await dispatchApi.policies(props.processKey)
+  } catch (error) {
+    // 设计者可能只有部署权限；分单策略保存按钮会再给出明确提示
+    console.error('[NodeConfigPanel] 分单策略加载失败', error)
+    dispatchPolicies.value = []
+    return
+  }
+  syncDispatchPolicy()
+}
+
+function syncDispatchPolicy() {
+  if (!config.value || config.value.assigneeType !== 'DISPATCH') return
+  const nodeId = currentId.value
+  const rows = dispatchPolicies.value.filter((row: any) => row.nodeId === nodeId)
+  const row = rows.find((item: any) => Number(item.definitionVersion) === 0) || rows[0]
+  dispatch.poolId = row?.poolId ?? null
+  dispatch.mode = row?.mode || 'AUTO'
+  dispatch.algorithm = row?.algorithm || 'LEAST_LOAD'
+  const policy = row?.config || {}
+  dispatch.requireCheckin = policy.requireCheckin !== false
+  dispatch.requireOnline = policy.requireOnline === true
+  const refusal = policy.refusal || {}
+  const cooldown = Array.isArray(refusal.onAssignRefusal)
+    ? refusal.onAssignRefusal.find((item: any) => item?.type === 'COOLDOWN') : null
+  dispatch.cooldownMinutes = Number(cooldown?.minutes ?? 30)
+  dispatch.escalateAfter = Number(refusal.escalate?.consecutive ?? 3)
+}
+
+async function saveDispatchPolicy() {
+  if (!props.processKey) {
+    ElMessage.warning('请先选择流程')
+    return
+  }
+  if (!currentId.value) {
+    ElMessage.warning('请先选择节点')
+    return
+  }
+  if (!dispatch.poolId) {
+    ElMessage.warning('请选择分单池')
+    return
+  }
+  const refusal: Record<string, any> = {
+    windowDays: 7,
+    onDismiss: [{ type: 'EXCLUDE_TASK' }],
+    onRelease: [{ type: 'EXCLUDE_TASK' }],
+    onAssignRefusal: [{ type: 'EXCLUDE_TASK' }],
+    escalate: { consecutive: Number(dispatch.escalateAfter) || 0 }
+  }
+  if (Number(dispatch.cooldownMinutes) > 0) {
+    refusal.onAssignRefusal.push({
+      type: 'COOLDOWN', minutes: Number(dispatch.cooldownMinutes), scope: 'POOL'
+    })
+    refusal.onRelease.push({
+      type: 'COOLDOWN', minutes: Number(dispatch.cooldownMinutes), scope: 'POOL'
+    })
+  }
+  // 主算法必须真正影响排序：后端 weightsOf 是「配了 weights 就直接用」，
+  // 这里把选中的算法权重提到 0.6，其余均分，避免 algorithm 沦为纯展示字段。
+  const weights: Record<string, number> = {}
+  for (const name of ['LEAST_LOAD', 'RATING', 'FAIR', 'SKILL', 'WEIGHT']) {
+    weights[name] = name === dispatch.algorithm ? 0.6 : 0.1
+  }
+  savingDispatch.value = true
+  try {
+    await dispatchApi.savePolicy({
+      processKey: props.processKey,
+      definitionVersion: 0,
+      nodeId: currentId.value,
+      poolId: Number(dispatch.poolId),
+      mode: dispatch.mode,
+      algorithm: dispatch.algorithm,
+      config: {
+        requireCheckin: dispatch.requireCheckin,
+        requireOnline: dispatch.requireOnline,
+        weights,
+        refusal
+      }
+    })
+    ElMessage.success('分单策略已保存')
+    await loadDispatchPolicies()
+  } catch (error) {
+    ElMessage.error((error as any)?.response?.data?.message || '保存分单策略失败')
+  } finally {
+    savingDispatch.value = false
+  }
+}
 
 // ---------- 多表单 + 二维字段权限 ----------
 // baseFormCodes 来自流程发起配置（wf_process_setting.base_form_codes），节点端只读。
@@ -366,6 +544,7 @@ function valueHint(type: string) {
   if (type === 'ORG_ROLE') return '组织ID:角色编码，如 2:DEPT_MANAGER'
   if (type === 'DEPT_MANAGER') return '主管角色编码，默认 DEPT_MANAGER'
   if (type === 'FORM_FIELD') return '表单字段名，值须为用户 ID'
+  if (type === 'DISPATCH') return '由分单池策略决定'
   return '可留空（发起人 / 上一节点办理人）'
 }
 function configured(id: string) { return store.has(id) }
@@ -502,6 +681,7 @@ function select(node: any) {
   conditionMode.value = conditionExpression.value ? 'EXPRESSION' : 'STRUCTURED'
   Object.assign(condition, { field: '', operator: '>', value: '', valueType: 'NUMBER' },
     item.conditionConfig || {})
+  syncDispatchPolicy()
   revealOnCanvas(node)
 }
 
@@ -576,7 +756,10 @@ defineExpose({ refreshNodes, getConfigs, loadConfigs, reloadBaseForms: loadBaseF
 watch(() => props.modeler, () => { refreshNodes(); bindCanvasSelection() }, { immediate: true })
 
 // 流程 Key 变更（设计器切流程 / 载入草稿）时基础表单也要跟着换
-watch(() => props.processKey, () => { loadBaseFormCodes() })
+watch(() => props.processKey, () => { loadBaseFormCodes(); loadDispatchPolicies() })
+
+// 切节点或把节点改成「分单池派单」时，回填该节点的分单策略
+watch([currentId, () => config.value?.assigneeType], () => { syncDispatchPolicy() })
 
 onMounted(async () => {
   try {
@@ -584,6 +767,8 @@ onMounted(async () => {
     options.value = data
   } catch { options.value = {} }
   await loadBaseFormCodes()
+  await loadDispatchOptions()
+  await loadDispatchPolicies()
   // options（含表单字段清单）异步到达后，重填一次字段权限视图，
   // 否则用户先点节点再加载完选项时下拉会是空的
   initFieldPolicy()
@@ -611,6 +796,7 @@ onMounted(async () => {
 .node-form { flex: 1; overflow: auto; padding: 12px 10px; }
 .sub-title { font-size: 13px; font-weight: 600; margin: 12px 0 8px; color: #1C1B18; }
 .button-row { display: flex; gap: 4px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+.dispatch-line { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
 .field-policy-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .field-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: #1C1B18; }
 .field-empty { padding: 4px 0; }

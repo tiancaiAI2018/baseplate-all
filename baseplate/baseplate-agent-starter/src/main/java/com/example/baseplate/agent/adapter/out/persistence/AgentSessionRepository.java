@@ -37,6 +37,10 @@ public final class AgentSessionRepository {
         return id == null ? 0L : id;
     }
 
+    public void deleteByAgent(String tenant, long agentId) {
+        jdbc.update("DELETE FROM agent_session WHERE tenant_id = ? AND agent_id = ?", tenant, agentId);
+    }
+
     public Optional<AgentSession> findOwned(String tenant, String userId, long id) {
         return jdbc.query("""
                 SELECT * FROM agent_session

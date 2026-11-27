@@ -1,6 +1,8 @@
 package com.example.baseplate.platform.autoconfigure;
 
 import com.example.baseplate.api.port.out.CurrentUserProvider;
+import com.example.baseplate.api.port.out.ExternalServiceGateway;
+import com.example.baseplate.api.port.out.ExternalToolDescriptorProvider;
 import com.example.baseplate.api.port.out.NonceStore;
 import com.example.baseplate.api.port.out.RateLimiter;
 import com.example.baseplate.api.port.out.UserDirectory;
@@ -10,7 +12,10 @@ import com.example.baseplate.platform.adapter.out.persistence.OpenApiCatalogRepo
 import com.example.baseplate.platform.adapter.out.persistence.OpenAppRepository;
 import com.example.baseplate.platform.adapter.out.persistence.OpenAuthCodeRepository;
 import com.example.baseplate.platform.adapter.out.persistence.OpenRefreshTokenRepository;
+import com.example.baseplate.platform.application.ExternalServiceGatewayImpl;
+import com.example.baseplate.platform.application.ExternalServiceRegistry;
 import com.example.baseplate.platform.application.OpenAppService;
+import com.example.baseplate.platform.application.PlatformExternalToolProvider;
 import com.example.baseplate.platform.config.PlatformProperties;
 import com.example.baseplate.platform.crypto.SecretCipher;
 import com.example.baseplate.platform.token.OpenTokenService;
@@ -42,6 +47,26 @@ public class PlatformAutoConfiguration {
     @ConditionalOnMissingBean
     public SecretCipher secretCipher(PlatformProperties properties) {
         return new SecretCipher(properties.getSecretKey());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ExternalServiceRegistry externalServiceRegistry(SecretCipher cipher) {
+        return new ExternalServiceRegistry(cipher);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ExternalServiceGateway externalServiceGateway(ExternalServiceRegistry registry,
+                                                         SecretCipher cipher) {
+        return new ExternalServiceGatewayImpl(registry, cipher);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ExternalToolDescriptorProvider externalToolDescriptorProvider(
+            ExternalServiceRegistry registry) {
+        return new PlatformExternalToolProvider(registry);
     }
 
     @Bean

@@ -280,6 +280,7 @@ chain.doFilter(...);
 |---|---|
 | 内部工具 | 服务端执行，`requirePermission` 按当前用户权限点校验；只做只读查询 |
 | 外部工具 | `direct` 模式直接下发 schema；收敛模式由入口工具发现后抛 `ToolSuspendException` 转前端执行。前端始终带用户令牌调现有 REST，`@RequiresPermission`、`@AuditLog`、`requireOwnedTask` 全部照常生效 |
+| 数据助手（DataAgent） | 只允许 SELECT / WITH：禁写操作、多语句、`pg_sleep`/`dblink` 等危险函数；自动补 `LIMIT`、只读事务、10s 超时。表名来自 `information_schema` 且经白名单与正则校验；模型看不到密码哈希等字段的样例值由工具结果摘要控制 |
 
 工具在**进入模型之前**就已经过滤：`selectTools` 依次检查页面匹配、用户权限点、Agent 绑定与审批策略。
 模型看不到一个它调不动的工具。

@@ -23,6 +23,9 @@ config-keys:
   - baseplate.agent.max-iters
   - baseplate.agent.tool-exposure-mode
   - baseplate.agent.tool-exposure-skill
+  - baseplate.agent.compaction-enabled
+  - baseplate.agent.compaction-threshold
+  - baseplate.agent.compaction-keep-messages
   - baseplate.agent.stream-timeout-seconds
   - baseplate.agent.skill-dir
 

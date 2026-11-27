@@ -50,6 +50,12 @@
       <artifactId>agentscope-core</artifactId>
       <version>${agentscope.version}</version>
     </dependency>
+    <!-- 官方上下文压缩：CompactionMiddleware / ConversationCompactor / TokenCounterUtil -->
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope-harness</artifactId>
+      <version>${agentscope.version}</version>
+    </dependency>
     <!-- OpenAI 兼容端点：MiniMax、DeepSeek、Moonshot、vLLM 都走这一条 -->
     <dependency>
       <groupId>io.agentscope</groupId>
@@ -82,6 +88,11 @@
       <groupId>io.agentscope</groupId>
       <artifactId>agentscope-extensions-postgresql</artifactId>
       <version>${agentscope.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

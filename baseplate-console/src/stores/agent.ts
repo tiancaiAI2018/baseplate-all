@@ -52,6 +52,8 @@ export interface AgentChatMessage {
 
 export interface AgentSessionItem {
   id: number
+  /** 会话所属智能体：切换页面后历史列表可能混入其他 Agent 的会话 */
+  agentId?: number
   title?: string
   pageKey?: string
   messageCount: number
@@ -66,6 +68,7 @@ export const useAgentStore = defineStore('agent', {
   state: () => ({
     enabled: false,
     open: false,
+    agentId: null as number | null,
     agentCode: '',
     agentName: '',
     pageKey: '',
@@ -99,8 +102,17 @@ export const useAgentStore = defineStore('agent', {
       this.pageKey = pageKey
       try {
         const { data } = await http.get('/api/agent/chat/bootstrap', { params: { pageKey } })
+        const nextCode = data.agentCode || ''
+        // 页面绑定的智能体变了：旧会话属于上一个 Agent，继续用会把新 Agent 的
+        // 工具配置套在旧会话上（表现为「关掉的工具还能被 find 到」）
+        if (this.agentCode && nextCode && this.agentCode !== nextCode) {
+          this.sessionId = null
+          this.messages = []
+          this.error = ''
+        }
         this.enabled = !!data.enabled
-        this.agentCode = data.agentCode || ''
+        this.agentId = data.agentId ?? null
+        this.agentCode = nextCode
         this.agentName = data.agentName || ''
         if (!this.enabled) {
           this.open = false
@@ -135,6 +147,11 @@ export const useAgentStore = defineStore('agent', {
     },
 
     async continueSession(sessionId: number) {
+      const item = this.sessions.find((session) => session.id === sessionId)
+      // 历史列表是全部会话，不能把其他智能体的会话挂到当前助手下面
+      if (item?.agentId != null && this.agentId != null && item.agentId !== this.agentId) {
+        throw new Error('该会话属于其他智能体，请新建对话')
+      }
       const { data } = await http.get(`/api/agent/sessions/${sessionId}/messages`)
       this.sessionId = sessionId
       this.messages = (data as any[]).map((row) => ({

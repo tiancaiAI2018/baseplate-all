@@ -5,7 +5,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
 import java.time.OffsetDateTime;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /** 消息持久化：seq 在每个会话内单调递增，前端按 seq 排序去重。 */
 public final class AgentMessageRepository {
@@ -46,6 +50,39 @@ public final class AgentMessageRepository {
                  WHERE session_id = ?
                  ORDER BY seq
                 """, MAPPER, sessionId);
+    }
+
+    /** 最后一条非空助手回复：不在任何请求体里，观测/导出需要单独补到合并请求末尾。 */
+    public Optional<String> latestAssistantContent(long sessionId) {
+        return jdbc.query("""
+                SELECT content FROM agent_message
+                 WHERE session_id = ? AND role = 'ASSISTANT'
+                   AND content IS NOT NULL AND content <> ''
+                 ORDER BY seq DESC
+                 LIMIT 1
+                """, (rs, i) -> rs.getString(1), sessionId).stream().findFirst();
+    }
+
+    /** 批量版：导出时一次取多会话的最后一条助手回复。 */
+    public Map<Long, String> latestAssistantContents(List<Long> sessionIds) {
+        if (sessionIds == null || sessionIds.isEmpty()) {
+            return Map.of();
+        }
+        String placeholders = String.join(",", Collections.nCopies(sessionIds.size(), "?"));
+        List<Map.Entry<Long, String>> rows = jdbc.query("""
+                SELECT DISTINCT ON (session_id) session_id, content AS payload
+                  FROM agent_message
+                 WHERE session_id IN (%s) AND role = 'ASSISTANT'
+                   AND content IS NOT NULL AND content <> ''
+                 ORDER BY session_id, seq DESC
+                """.formatted(placeholders),
+                (rs, i) -> Map.entry(rs.getLong("session_id"), rs.getString("payload")),
+                sessionIds.toArray());
+        Map<Long, String> result = new HashMap<>();
+        for (Map.Entry<Long, String> row : rows) {
+            result.put(row.getKey(), row.getValue());
+        }
+        return result;
     }
 
     /**

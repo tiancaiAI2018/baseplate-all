@@ -220,7 +220,7 @@ public class WorkflowController {
                 option("INITIATOR", "发起人"), option("USER", "指定用户"),
                 option("ROLE", "指定角色"), option("ORG_ROLE", "组织 + 角色"),
                 option("DEPT_MANAGER", "发起人部门主管"), option("PREV_OPERATOR", "上一节点办理人"),
-                option("FORM_FIELD", "表单字段指定")));
+                option("FORM_FIELD", "表单字段指定"), option("DISPATCH", "分单池派单")));
         options.put("signTypes", List.of(
                 option("SINGLE", "单签"), option("OR_SIGN", "或签（任一人办理）"),
                 option("COUNTERSIGN", "会签（并行）"), option("SEQUENTIAL", "依次签（串行）")));

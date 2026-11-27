@@ -1,0 +1,13 @@
+id: dataagent
+display-name: 数据助手
+version: 1.0.0
+requires: "baseplate-api >=1.0.0,<2.0.0"
+root-package: com.example.baseplate.dataagent
+enabled-by-default: true
+
+permissions:
+  - { code: "agent:chat", label: 使用智能助手, type: BUTTON }
+
+config-keys: []
+
+flyway-locations: []

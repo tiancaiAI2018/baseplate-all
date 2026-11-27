@@ -30,6 +30,16 @@
             <el-menu-item index="/workflow/mine">
               <el-icon><Tickets /></el-icon><template #title>我发起的</template>
             </el-menu-item>
+            <el-menu-item v-if="auth.has('wf:checkin') || auth.has('wf:task') || auth.isSuperAdmin"
+                          index="/workflow/dispatch">
+              <el-icon><Bell /></el-icon><template #title>分单中心</template>
+            </el-menu-item>
+            <el-menu-item v-if="auth.has('wf:pool') || auth.isSuperAdmin" index="/workflow/dispatch/pools">
+              <el-icon><OfficeBuilding /></el-icon><template #title>分单池</template>
+            </el-menu-item>
+            <el-menu-item v-if="auth.has('wf:view') || auth.isSuperAdmin" index="/workflow/dispatch/board">
+              <el-icon><DataLine /></el-icon><template #title>分单看板</template>
+            </el-menu-item>
           </el-menu-item-group>
           <el-menu-item-group v-if="!collapsed" title="身份与权限">
             <el-menu-item v-if="auth.has('user:view')" index="/identity/users">

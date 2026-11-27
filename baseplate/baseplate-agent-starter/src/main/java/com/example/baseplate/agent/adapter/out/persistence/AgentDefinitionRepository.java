@@ -151,6 +151,11 @@ public final class AgentDefinitionRepository {
                 input.status(), tenant, id);
     }
 
+    public void deleteDependents(String tenant, long id) {
+        jdbc.update("DELETE FROM agent_hitl_request WHERE tenant_id = ? AND agent_id = ?", tenant, id);
+        jdbc.update("DELETE FROM agent_external_call WHERE tenant_id = ? AND agent_id = ?", tenant, id);
+    }
+
     public void delete(String tenant, long id) {
         jdbc.update("DELETE FROM agent_definition WHERE tenant_id = ? AND id = ?", tenant, id);
     }

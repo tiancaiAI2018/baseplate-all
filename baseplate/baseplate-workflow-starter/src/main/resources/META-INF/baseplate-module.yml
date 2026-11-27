@@ -14,6 +14,12 @@ permissions:
   - { code: "wf:config", label: 配置流程节点, type: BUTTON }
   - { code: "wf:form", label: 流程表单设计, type: MENU }
   - { code: "wf:lab", label: 流程演练, type: MENU }
+  - { code: "wf:checkin", label: 签到, type: MENU }
+  - { code: "wf:pool", label: 分单池管理, type: MENU }
+  - { code: "wf:dispatch", label: 指派与退回, type: BUTTON }
+  - { code: "wf:dispatch:cross-org", label: 跨组织指派, type: BUTTON }
+  - { code: "wf:dispatch:revoke", label: 撤销拒绝惩罚, type: BUTTON }
+  - { code: "wf:rating", label: 服务评价, type: BUTTON }
 
 menus:
   - { path: /workflow/start, label: 发起流程, permission: "wf:task", icon: Promotion }
@@ -22,6 +28,9 @@ menus:
   - { path: /workflow/designer, label: 流程设计, permission: "wf:deploy", icon: Share }
   - { path: /workflow/forms, label: 流程表单, permission: "wf:form", icon: Grid }
   - { path: /workflow/lab, label: 流程演练, permission: "wf:lab", icon: SetUp }
+  - { path: /workflow/dispatch, label: 分单中心, permission: "wf:checkin", icon: Tickets }
+  - { path: /workflow/dispatch/pools, label: 分单池, permission: "wf:pool", icon: OfficeBuilding }
+  - { path: /workflow/dispatch/board, label: 分单看板, permission: "wf:view", icon: DataLine }
 
 data-scopes:
   - { aggregate: WorkflowInstance, dimension: start_user_id }

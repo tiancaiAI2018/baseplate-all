@@ -39,6 +39,9 @@
 | `BASEPLATE_AGENT_API_KEY` | 空 | | 模型调用密钥；只在首次种子写入时使用，之后以控制台保存的配置为准 |
 | `BASEPLATE_AGENT_TOOL_EXPOSURE_MODE` | `cli` | | 内部工具暴露方式：`cli`（`baseplate` 命令行）/ `meta`（三个元工具）/ `direct`（全量直挂） |
 | `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL` | `true` | | 收敛模式是否自动切换到专属技能集（`cli`→`modes` 含 cli 的技能 / `meta`→含 meta 的技能 / `direct`→Agent 原本绑定的技能）；归属由 SKILL.md frontmatter 声明、页面新增技能可填，技能正文由模型按需加载，不写进 system prompt |
+| `BASEPLATE_AGENT_COMPACTION_ENABLED` | `true` | | 是否挂载 AgentScope 官方 `CompactionMiddleware`（每轮推理前按阈值压缩上下文） |
+| `BASEPLATE_AGENT_COMPACTION_THRESHOLD` | `80` | | 自动压缩的 token 阈值：上下文窗口 × 占用百分比；此外沿用官方默认「消息数 ≥ 50」触发 |
+| `BASEPLATE_AGENT_COMPACTION_KEEP_MESSAGES` | `20` | | 压缩后保留的最近消息条数（官方 `keepMessages`，`keepTokens` 关闭） |
 
 > 后三个密钥生产环境用 `openssl rand -hex 32` 生成，且**不能共用**。
 > `JWT_SECRET` 与 `OPEN_TOKEN_SECRET` 相同时，`openTokenSecretGuard` 会在启动期抛异常。

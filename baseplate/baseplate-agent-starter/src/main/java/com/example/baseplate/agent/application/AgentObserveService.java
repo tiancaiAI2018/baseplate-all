@@ -1,7 +1,6 @@
 package com.example.baseplate.agent.application;
 
 import com.example.baseplate.agent.adapter.out.persistence.AgentModelCallRepository;
-import com.example.baseplate.agent.adapter.out.persistence.AgentModelCallRepository.ModelCallRow;
 import com.example.baseplate.agent.adapter.out.persistence.AgentObserveRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentObserveRepository.ObserveSessionRow;
 import com.example.baseplate.agent.adapter.out.persistence.AgentRunRepository;
@@ -23,6 +22,10 @@ import java.util.Map;
  * agent_model_call），这里只做只读聚合。模型调用请求体由
  * {@link RecordingModel} 在 Model.stream 拦截点采集，
  * 是实际发送给模型 HTTP 接口的最准确快照。</p>
+ *
+ * <p>请求体是累积的：第 N 次调用包含前 N-1 次的全部 messages，
+ * 全量返回会让 30 轮会话达到 MB 级。详情与导出只解析「消息最多的一份」，
+ * 调用次数单独返回。</p>
  */
 public final class AgentObserveService {
 
@@ -56,12 +59,11 @@ public final class AgentObserveService {
     public record PagedSessions(long total, List<ObserveSessionRow> items) {
     }
 
-    /** 会话详情：会话行 + 实际发送的 system prompt + 完整消息回放 + 指标 + 模型调用请求。 */
+    /** 会话详情：会话行 + 实际发送的 system prompt + 合并请求 + 指标。 */
     public record SessionDetail(ObserveSessionRow session,
                                 String systemPrompt,
-                                List<AgentSessionService.MessageView> messages,
+                                int modelCallCount,
                                 List<RunRow> runs,
-                                List<ModelCallRow> modelCalls,
                                 Map<String, Object> mergedRequest) {
     }
 
@@ -75,6 +77,11 @@ public final class AgentObserveService {
      */
     public record ExportedSession(ObserveSessionRow session,
                                   Map<String, Object> request) {
+    }
+
+    /** 导出源数据：最宽请求原文 + 最近工具定义 + 最后一条助手回复，解析交给调用方逐条进行。 */
+    public record ExportSource(ObserveSessionRow session, String requestJson,
+                               String toolsJson, String finalAnswer) {
     }
 
     /** 过滤下拉用的精简 Agent 选项，不暴露模型地址与密钥。 */
@@ -95,83 +102,53 @@ public final class AgentObserveService {
     public SessionDetail sessionDetail(String tenant, long sessionId) {
         ObserveSessionRow row = observe.findSession(tenant, sessionId)
                 .orElseThrow(() -> new BaseplateException("NOT_FOUND", "会话不存在"));
-        List<ModelCallRow> calls = modelCalls.listBySession(sessionId);
+        int callCount = modelCalls.countBySession(sessionId);
         // system prompt 取最近一次实际请求的 messages[0]：skill 正文动态注入，
-        // 只有请求体里的才是真正发出去的。没有记录时回退配置组装。
-        String systemPrompt = calls.isEmpty()
+        // 只有请求体里的才是真正发出去的。没有记录时回退空串。
+        String systemPrompt = callCount == 0
                 ? "" : modelCalls.latestSystemPrompt(sessionId).orElse("");
-        List<AgentSessionService.MessageView> views = sessionService.messageViews(sessionId);
-        return new SessionDetail(row, systemPrompt,
-                views,
+        return new SessionDetail(row, systemPrompt, callCount,
                 runs.listBySession(sessionId),
-                calls,
-                mergeRequests(calls, views));
+                mergeRequest(modelCalls.widestRequest(sessionId).orElse(null),
+                        modelCalls.latestTools(sessionId).orElse(null),
+                        sessionService.latestAssistantContent(sessionId)));
     }
 
     /**
-     * 把「每次调用的完整请求体」压成一份可整体阅读的请求。
+     * 把「一次调用的完整请求体」整理成可整体阅读的请求。
      *
-     * <p>请求体是累积的：第 N 次调用天然包含前 N-1 次的全部 messages，
-     * 逐份展示会大段重复。这里取 messages 最长的那一份作为完整对话，
-     * tools 只保留最近一次非空定义，采样参数取最新一次，页面因此只需渲染一遍。</p>
-     *
-     * <p>最后一次回复是请求之后才生成的，不在任何请求体里，这里从平台落库的
-     * 消息里补到末尾，使这份请求本身就是一次完整对话（观测视图与导出共用）。</p>
+     * <p>取 messages 最长的那一份作为完整对话，tools 只保留最近一次非空定义，
+     * 页面因此只需渲染一遍；最后一次回复是请求之后才生成的，不在任何请求体里，
+     * 这里从平台落库的消息里补到末尾（观测视图与导出共用）。</p>
      */
-    private Map<String, Object> mergeRequests(List<ModelCallRow> calls,
-                                              List<AgentSessionService.MessageView> views) {
-        Map<String, Object> widest = null;
-        Map<String, Object> toolsSource = null;
-        int widestSize = -1;
-        for (ModelCallRow call : calls) {
-            Map<String, Object> body = readRequest(call.requestJson());
-            if (body == null) {
-                continue;
-            }
-            int size = body.get("messages") instanceof List<?> list ? list.size() : 0;
-            if (size >= widestSize) {
-                widestSize = size;
-                widest = body;
-            }
-            if (body.get("tools") instanceof List<?> tools && !tools.isEmpty()) {
-                toolsSource = body;
-            }
-        }
+    private Map<String, Object> mergeRequest(String widestJson, String toolsJson, String finalAnswer) {
+        Map<String, Object> widest = readRequest(widestJson);
         if (widest == null) {
             return Map.of();
         }
         Map<String, Object> merged = new LinkedHashMap<>(widest);
-        if (toolsSource != null && toolsSource != widest) {
-            merged.put("tools", toolsSource.get("tools"));
+        Object tools = readJson(toolsJson);
+        if (tools instanceof List<?> list && !list.isEmpty()) {
+            merged.put("tools", tools);
         }
-        appendFinalAnswer(merged, views);
+        appendFinalAnswer(merged, finalAnswer);
         return merged;
     }
 
-    private void appendFinalAnswer(Map<String, Object> merged,
-                                   List<AgentSessionService.MessageView> views) {
-        AgentSessionService.MessageView last = null;
-        for (int i = views.size() - 1; i >= 0; i--) {
-            AgentSessionService.MessageView view = views.get(i);
-            if ("ASSISTANT".equalsIgnoreCase(view.role())
-                    && view.content() != null && !view.content().isBlank()) {
-                last = view;
-                break;
-            }
-        }
-        if (last == null) {
+    private void appendFinalAnswer(Map<String, Object> merged, String content) {
+        if (content == null || content.isBlank()) {
             return;
         }
         List<Object> messages = merged.get("messages") instanceof List<?> list
                 ? new ArrayList<>(list) : new ArrayList<>();
         if (!messages.isEmpty() && messages.get(messages.size() - 1) instanceof Map<?, ?> tail
                 && "assistant".equals(String.valueOf(tail.get("role")))
-                && last.content().equals(text(tail.get("content")))) {
+                && content.equals(text(tail.get("content")))) {
             return;
         }
         Map<String, Object> answer = new LinkedHashMap<>();
         answer.put("role", "assistant");
-        answer.put("content", last.content());
+        answer.put("content", content);
         messages.add(answer);
         merged.put("messages", messages);
     }
@@ -195,25 +172,50 @@ public final class AgentObserveService {
         }
     }
 
-    /** 导出：按筛选条件批量取会话，每会话附合并后的完整请求体（含最终回复）。 */
-    public List<ExportedSession> exportSessions(String tenant, SessionFilter filter, int limit) {
+    private Object readJson(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return mapper.readValue(json, Object.class);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 导出：按筛选条件批量取会话，再批量取每个会话的最宽请求、工具与最终回复。
+     * 不读取每次调用的原始请求体，500 个会话也只解析 500 份（而非上万份累积请求）。
+     */
+    public List<ExportSource> exportSources(String tenant, SessionFilter filter, int limit) {
         int size = Math.max(1, Math.min(limit <= 0 ? 200 : limit, MAX_EXPORT_LIMIT));
         List<ObserveSessionRow> rows = observe.listSessions(tenant, filter.agentId(),
                 filter.userId(), filter.keyword(), size, 0).items();
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = rows.stream().map(ObserveSessionRow::id).toList();
+        Map<Long, String> widest = modelCalls.widestRequests(ids);
+        Map<Long, String> tools = modelCalls.latestToolsBySession(ids);
+        Map<Long, String> answers = sessionService.latestAssistantContents(ids);
         return rows.stream()
-                .map(row -> new ExportedSession(row, requestOf(row.id())))
+                .map(row -> new ExportSource(row, widest.get(row.id()),
+                        tools.get(row.id()), answers.get(row.id())))
                 .toList();
     }
 
-    public ExportedSession exportSession(String tenant, long sessionId) {
+    public ExportSource exportSource(String tenant, long sessionId) {
         ObserveSessionRow row = observe.findSession(tenant, sessionId)
                 .orElseThrow(() -> new BaseplateException("NOT_FOUND", "会话不存在"));
-        return new ExportedSession(row, requestOf(sessionId));
+        return new ExportSource(row,
+                modelCalls.widestRequest(sessionId).orElse(null),
+                modelCalls.latestTools(sessionId).orElse(null),
+                sessionService.latestAssistantContent(sessionId));
     }
 
-    private Map<String, Object> requestOf(long sessionId) {
-        return mergeRequests(modelCalls.listBySession(sessionId),
-                sessionService.messageViews(sessionId));
+    /** 把导出源合并成一份完整请求（与观测页 JSON 视图一致）。 */
+    public Map<String, Object> mergedRequest(ExportSource source) {
+        return mergeRequest(source.requestJson(), source.toolsJson(), source.finalAnswer());
     }
 
     public List<AgentOption> agentOptions(String tenant) {

@@ -2,6 +2,7 @@ package com.example.baseplate.agent.runtime;
 
 import com.example.baseplate.agent.adapter.out.persistence.AgentDefinitionRepository;
 import com.example.baseplate.agent.adapter.out.persistence.AgentModelCallRepository;
+import com.example.baseplate.agent.application.AgentCompactionConfig;
 import com.example.baseplate.agent.application.RecordingModel;
 import com.example.baseplate.agent.application.SkillIndexService;
 import com.example.baseplate.agent.config.AgentProperties;
@@ -18,6 +19,7 @@ import com.example.baseplate.agent.tool.ToolDirectory;
 import com.example.baseplate.agent.tool.ToolMetaTool;
 import com.example.baseplate.agent.tool.ToolRegistry;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.model.Model;
 import io.agentscope.core.model.ToolSchema;
 import io.agentscope.core.permission.PermissionBehavior;
 import io.agentscope.core.permission.PermissionContextState;
@@ -26,6 +28,7 @@ import io.agentscope.core.permission.PermissionRule;
 import io.agentscope.core.skill.SkillFilter;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.tool.Toolkit;
+import io.agentscope.harness.agent.middleware.CompactionMiddleware;
 
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -218,15 +221,26 @@ public final class AgentRuntimeFactory {
             }
         }
 
+        // 观测：装饰 Model 拦截实际发给模型 HTTP 接口的请求体
+        //（2.0.4 的 middleware onModelCall 未接线，Model.stream 是唯一必经点）
+        // 压缩摘要也走同一个 Model，因此会被一并观测到
+        Model model = new RecordingModel(modelFactory.build(definition), modelCallRepository);
         ReActAgent.Builder builder = ReActAgent.builder()
                 .name("baseplate-" + definition.agentCode())
                 .sysPrompt(systemPrompt(definition))
-                // 观测：装饰 Model 拦截实际发给模型 HTTP 接口的请求体
-                //（2.0.4 的 middleware onModelCall 未接线，Model.stream 是唯一必经点）
-                .model(new RecordingModel(modelFactory.build(definition), modelCallRepository))
+                .model(model)
                 .toolkit(toolkit)
-                .maxIters(properties.getMaxIters())
+                .maxIters(maxIters(definition))
                 .stateStore(stateStore);
+
+        if (properties.isCompactionEnabled()) {
+            // 官方自动压缩在每轮 onReasoning 前按 token 阈值触发：
+            // 支持工具结果裁剪 / 参数截断，并把摘要直接写回 AgentState，
+            // 由 ReActAgent 自己的 saveStateToSession 做 CAS 持久化。
+            // 平台没有 harness 工作区，flush/offload 已在配置里关闭，WorkspaceManager 传 null。
+            builder.middlewares(List.of(new CompactionMiddleware(
+                    null, model, AgentCompactionConfig.automatic(properties, definition))));
+        }
 
         // HITL：把配置为 ASK 的工具登记为需确认；DENY 已在上面的 enabledTools 里排除。
         // 其余放行工具必须显式登记 ALLOW，否则会落到 PermissionEngine 的默认 ASK。
@@ -338,6 +352,21 @@ public final class AgentRuntimeFactory {
         };
         return base + "\n\n[运行规则]\n" + entryRules + "\n"
                 + "工具返回失败时必须如实告知用户失败原因，绝不能声称成功。";
+    }
+
+    private int maxIters(AgentDefinition definition) {
+        Object configured = definition.modelParams() == null
+                ? null : definition.modelParams().get("maxIters");
+        return resolveMaxIters(configured, properties.getMaxIters());
+    }
+
+    /** 负数表示无限循环；其余夹在 1..1000，避免配置异常把线程拖死。 */
+    static int resolveMaxIters(Object configured, int fallback) {
+        int value = configured instanceof Number number ? number.intValue() : fallback;
+        if (value < 0) {
+            return Integer.MAX_VALUE;
+        }
+        return Math.max(1, Math.min(value, 1000));
     }
 
     private String entryRule(String channel, String tools, String entryName) {

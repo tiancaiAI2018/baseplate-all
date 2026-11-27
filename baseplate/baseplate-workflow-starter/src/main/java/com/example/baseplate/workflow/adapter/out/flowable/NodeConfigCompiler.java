@@ -36,6 +36,7 @@ public final class NodeConfigCompiler {
     private static final String FLOWABLE_NS = "http://flowable.org/bpmn";
     private static final String XSI_NS = "http://www.w3.org/2001/XMLSchema-instance";
     private static final String RESOLVER = "${wfAssigneeResolver}";
+    private static final String DISPATCHER = "${wfDispatchListener}";
     private static final Pattern FIELD = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,63}");
     private static final Set<String> OPERATORS = Set.of("==", "!=", ">", ">=", "<", "<=");
     private static final Set<String> NUMERIC_TYPES = Set.of("NUMBER", "MONEY");
@@ -89,6 +90,12 @@ public final class NodeConfigCompiler {
         // + wf_process_setting.base_form_codes 驱动，这里只清理存量 formKey，不再写入。
         task.removeAttributeNS(FLOWABLE_NS, "formKey");
         removeChildren(task, "multiInstanceLoopCharacteristics");
+        // 分单节点不写 assignee 表达式：任务创建后由 DispatchTaskListener 按池策略决定
+        // 直接指派还是进抢单池。写死 ${wf_assignee_x} 会先赋值再被覆盖，产生竞争。
+        if ("DISPATCH".equalsIgnoreCase(config.assigneeType())) {
+            addListener(doc, task, "create", DISPATCHER);
+            return;
+        }
         String sign = config.signType().toUpperCase(Locale.ROOT);
         boolean sequential = "SEQUENTIAL".equals(sign);
         boolean counter = "COUNTERSIGN".equals(sign) || sequential;
@@ -114,6 +121,10 @@ public final class NodeConfigCompiler {
     }
 
     private void addResolverListener(Document doc, Element task) {
+        addListener(doc, task, "create", RESOLVER);
+    }
+
+    private void addListener(Document doc, Element task, String event, String expression) {
         Element extensions = null;
         NodeList children = task.getChildNodes();
         for (int i = 0; i < children.getLength(); i++) {
@@ -130,8 +141,8 @@ public final class NodeConfigCompiler {
         }
         removeChildren(extensions, "taskListener");
         Element listener = doc.createElementNS(FLOWABLE_NS, "flowable:taskListener");
-        listener.setAttribute("event", "create");
-        listener.setAttribute("delegateExpression", RESOLVER);
+        listener.setAttribute("event", event);
+        listener.setAttribute("delegateExpression", expression);
         extensions.appendChild(listener);
     }
 

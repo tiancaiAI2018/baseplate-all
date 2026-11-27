@@ -33,6 +33,9 @@ public final class AssigneeResolver {
             if (config.nodeType() != null && !"userTask".equalsIgnoreCase(config.nodeType())) {
                 continue;
             }
+            if ("DISPATCH".equalsIgnoreCase(config.assigneeType())) {
+                continue; // 分单节点由 DispatchTaskListener 处理，不预置找人变量
+            }
             List<String> users = usersFor(tenant, config, vars);
             if (users.isEmpty()) {
                 users = List.of(String.valueOf(vars.getOrDefault("initiator", "system")));

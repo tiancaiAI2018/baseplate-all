@@ -165,7 +165,7 @@ config/PlatformProperties      token-secret / secret-key / ttl / 窗口 / 沙盒
 
 | 模块 | 关键类 | 说明 |
 |---|---|---|
-| `workflow` | `FlowableProcessEngineAdapter`、`BpmnXmlValidator`、`NodeConfigCompiler`、`BpmnDraftComposer`、`WorkflowController`、`WorkflowDraftController` | BPMN 部署用 `disableSchemaValidation()`（fat jar 下 XSD 解析失败）；XML 走白名单校验；节点配置与草稿由服务端编译 |
+| `workflow` | `FlowableProcessEngineAdapter`、`BpmnXmlValidator`、`NodeConfigCompiler`、`BpmnDraftComposer`、`WorkflowController`、`WorkflowDraftController`、`DispatchController`、`WorkflowDispatchService`、`AgentOnlineRedispatchListener` | BPMN 部署用 `disableSchemaValidation()`（fat jar 下 XSD 解析失败）；XML 走白名单校验；节点配置与草稿由服务端编译；分单只从池组织解析候选，扩展点走 `baseplate-api` 端口；签到上线发 `AgentOnlineEvent`（AFTER_COMMIT）实时重派待派任务，定时扫描兜底 |
 | `rule` | `StructuredRuleInterpreter`、`RuleFieldRegistry`、`RuleController` | 只有「字段 + 运算符 + 值」，不接受表达式文本 |
 | `metadata` | `MetadataService`、`MetadataController` | FORM/LIST/FLOW 三类，字段白名单，禁 `script` / `expression`；`suspend/activate` 只挡新绑定 |
 | `registry` | `ModuleDescriptorLoader`、`ModuleDescriptorValidator`、`MigrationPlanWriter` | 清单加载与校验 |
@@ -226,8 +226,11 @@ baseplate-console/src/
 | `RulesView.vue` | `/rule/config` | 规则集配置与试算 |
 | `MetadataView.vue` | `/metadata/forms` | 低代码 Schema 编辑 |
 | `WorkflowView.vue` | `/workflow/designer` | 5 个 tab：设计器 / 定义 / 发起 / 实例 / 待办；画布向 AI 注册读取器 |
-| `NodeConfigPanel.vue` | — | 设计器右侧属性面板（找人/签署/表单/条件/按钮） |
+| `NodeConfigPanel.vue` | — | 设计器右侧属性面板（找人/签署/表单/条件/按钮/分单策略） |
 | `WorkflowLabView.vue` | `/workflow/lab` | 演练环境：初始化、账号、演示流程 |
+| `DispatchCenterView.vue` | `/workflow/dispatch` | 签到、抢单大厅、我的分单待办、待评价；指派/拒绝/评价弹窗 |
+| `DispatchPoolView.vue` | `/workflow/dispatch/pools` | 分单池与组织范围配置（含下级开关） |
+| `DispatchBoardView.vue` | `/workflow/dispatch/board` | 分单看板：决策日志、拒绝、惩罚撤销、评价 |
 | `ProcessStartView.vue` | `/workflow/start` | 发起流程：选定义、填表单、提交 |
 | `MyTodoView.vue` | `/workflow/todo` | 待办/已办；支持 AI 卡片深链 `?taskId=` 直接打开办理抽屉 |
 | `MyInstancesView.vue` | `/workflow/mine` | 我发起的实例与进度 |

@@ -167,6 +167,9 @@ mvn -DskipTests package
 | 路径写全（`/api/crm/customers`） | `baseURL` 是 `/`，没有额外前缀 |
 | 不要自己拼 `Authorization` 头 | 拦截器已从 `localStorage` 取 |
 
+分单相关请求统一封装在 `src/api/workflowDispatch.ts`（签到、池、策略、抢单、指派、拒绝、评价、看板），
+页面不直接拼这些 URL。
+
 ```ts
 import http, { errorText } from '../api/client'
 
@@ -253,6 +256,20 @@ try {
     "route": "/workflow/designer"
   }
 }
+```
+
+数据助手（DataAgent）的图表与表格卡片，由 `AgentChartCard.vue` / `AgentDataTableCard.vue` 渲染：
+
+```json
+{ "ui": { "kind": "chart", "title": "各租户用户数", "chartType": "bar",
+          "categories": ["default", "demo2"],
+          "series": [{ "name": "user_count", "data": [14, 1] }] } }
+```
+
+```json
+{ "ui": { "kind": "table", "title": "查询结果",
+          "columns": ["tenant_id", "user_count"],
+          "rows": [{ "tenant_id": "default", "user_count": "14" }] } }
 ```
 
 个人流程（我发起的 / 办理进度 / 概览）：
@@ -425,6 +442,9 @@ Element Plus 2.9 里 `:value` 不生效，要用 `:model-value` + `@change`：
 | `FormDesignerView.vue` | form-create Designer；保存草稿/发布；`onMounted` 注册当前字段读取器给 AI |
 | `FormListView.vue` | 表单定义列表：详情预览、编辑、作废/恢复（只挡新绑定）、新增跳设计器 |
 | `MyTodoView.vue` | 待办/已办；读 `?taskId=` 自动打开办理抽屉；监听 `workflow:changed` 刷新 |
+| `DispatchCenterView.vue` | 签到、抢单、我的分单待办、待评价；指派/拒绝/评价 |
+| `DispatchPoolView.vue` | 分单池组织范围（默认不含下级）与抢单开关 |
+| `DispatchBoardView.vue` | 分单决策日志、拒绝、惩罚撤销、评价 |
 | `WorkflowLabView.vue` | 一键初始化演练环境（测试账号、演示流程、节点配置） |
 | `AgentConfigView.vue` | 智能体配置：模型、提示词、页面多选、工具策略、技能绑定、测试连接 |
 | `OpenAppsView.vue` | 900px 抽屉 + 6 个 tab；授权树里 USER 类型接口在应用未开通授权码时置灰 |

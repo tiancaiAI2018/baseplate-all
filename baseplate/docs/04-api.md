@@ -2,7 +2,7 @@
 
 ## 本文档解决什么
 
-「这个能力对外暴露了哪些接口、要什么权限」。共 **137 个方法级映射**，按模块分组。
+「这个能力对外暴露了哪些接口、要什么权限」。共 **165 个方法级映射**，按模块分组。
 改动任何端点后，必须同步更新本表（见 `INDEX.md` 第六节）。
 
 ---
@@ -218,6 +218,52 @@
 | POST | `/api/workflow/lab/init` | `wf:lab` | 幂等初始化演练环境：组织/角色/6 个测试账号/表单/演示流程/节点配置 |
 | GET | `/api/workflow/lab/status` | `wf:lab` | 演练环境状态、账号清单、演示流程版本与隔离验证租户 |
 
+### 分单中心 `/api/workflow/dispatch`
+
+组织池是硬边界：候选只从池配置的组织（可选含下级）解析；候选为空时任务进待派池并告警，不回退发起人。
+签到 ≠ 在线：签到决定候选资格，心跳决定能否实时推送。拒绝事实、惩罚、评价全部按租户隔离。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/workflow/dispatch/checkin/today` | `wf:checkin` / `wf:task` | 今日签到、签退、坐席状态与最近 7 天记录 |
+| POST | `/api/workflow/dispatch/checkin` | `wf:checkin` / `wf:task` | 签到上班；当天幂等 |
+| POST | `/api/workflow/dispatch/checkin/checkout` | `wf:checkin` / `wf:task` | 签退下班 |
+| POST | `/api/workflow/dispatch/checkin/heartbeat` | `wf:checkin` / `wf:task` | 坐席心跳，`status=ONLINE/BUSY/AWAY/OFFLINE` |
+| GET | `/api/workflow/dispatch/pools` | `wf:pool` | 池列表（含组织与含下级标记） |
+| POST | `/api/workflow/dispatch/pools` | `wf:pool` | 新建/按 code 更新池；`orgs` 为空表示禁止派单 |
+| PUT | `/api/workflow/dispatch/pools/{id}` | `wf:pool` | 修改池信息与组织范围 |
+| DELETE | `/api/workflow/dispatch/pools/{id}` | `wf:pool` | 停用池；已进池任务仍可人工处理 |
+| GET | `/api/workflow/dispatch/orgs` | `wf:pool` | 组织树扁平列表（id/parentId/name/path） |
+| GET | `/api/workflow/dispatch/assignable-users` | `wf:pool` | 池组织范围内可指派用户 |
+| GET | `/api/workflow/dispatch/options` | `wf:view` | 设计器可选项：池、模式、算法、过滤器、拒绝原因 |
+| GET | `/api/workflow/dispatch/policies` | `wf:view` | 某流程的节点分单策略；`definitionVersion=0` 为默认 |
+| PUT | `/api/workflow/dispatch/policies` | `wf:config` | 保存节点策略：池/模式/算法/权重/拒绝策略 |
+| GET | `/api/workflow/dispatch/pool-tasks` | `wf:task` | 当前用户组织池内 OPEN 任务 |
+| GET | `/api/workflow/dispatch/my-tasks` | `wf:task` | 当前用户名下的分单任务 |
+| POST | `/api/workflow/dispatch/pool-tasks/{id}/claim` | `wf:task` | 抢单：条件 UPDATE + Flowable claim 同事务 |
+| POST | `/api/workflow/dispatch/tasks/{taskId}/assign` | `wf:dispatch` | 管理员指派；跨组织需 `wf:dispatch:cross-org` |
+| POST | `/api/workflow/dispatch/tasks/{taskId}/back-to-pool` | `wf:dispatch` | 已指派任务退回池里 |
+| POST | `/api/workflow/dispatch/tasks/{taskId}/refuse` | `wf:task` | 拒绝：`OFFER_DISMISS` / `ASSIGN_REFUSAL` / `RELEASE` |
+| GET | `/api/workflow/dispatch/refusals` | `wf:view` | 拒绝记录；普通用户只能查自己 |
+| GET | `/api/workflow/dispatch/penalties` | `wf:view` | 惩罚记录（冷却/封禁/降权） |
+| POST | `/api/workflow/dispatch/penalties/{id}/revoke` | `wf:dispatch:revoke` | 撤销惩罚并重算权重 |
+| GET | `/api/workflow/dispatch/ratable-tasks` | `wf:task` | 已办结且当前用户未评价的任务 |
+| POST | `/api/workflow/dispatch/tasks/{taskId}/rate` | `wf:rating` | 评价 1~5 分；终态才可评，禁止自评 |
+| GET | `/api/workflow/dispatch/ratings` | `wf:view` | 评价记录 |
+| GET | `/api/workflow/dispatch/stats` | `wf:view` | 看板统计：待抢、今日派出/认领/拒绝、平均等待 |
+| GET | `/api/workflow/dispatch/logs` | `wf:view` | 决策日志：候选人、打分、淘汰原因 |
+| POST | `/api/workflow/dispatch/timeout-scan` | `wf:manage` | 手动触发超时扫描；定时任务默认每分钟执行 |
+
+**待派任务的两种流转触发**（互不替代）：
+
+| 层 | 触发 | 行为 | 配置 |
+|---|---|---|---|
+| 实时 | 坐席签到、心跳转 ONLINE（`AgentOnlineEvent`，事务提交后） | 立即重派该用户组织可见池里的 OPEN 任务 | `baseplate.workflow.dispatch.checkin-redispatch-enabled`（默认 `true`） |
+| 兜底 | 定时扫描（默认每分钟） | 待派超时（默认 30 分钟）重派、已指派办理超时回池 | `pending-timeout-minutes`、`handle-timeout-minutes`、`scan-interval-ms`、`timeout-scan-enabled` |
+
+实时层让「发起时全员未签到、后来有人上线」的积压任务立刻流转，不必等 30 分钟兜底扫描；
+事件丢失也不影响最终结果，因为兜底扫描会补上。关闭实时层：`checkin-redispatch-enabled=false`。
+
 ### 流程草稿 `/api/workflow/drafts`
 
 AI 工具创建草稿、设计器载入草稿都走这一组。草稿只存节点/连线，不部署。
@@ -283,10 +329,14 @@ Schema 有字段白名单，禁 `script` / `expression` 类键。
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
 | POST | `/api/agent/chat/stream` | `agent:chat` | SSE 对话；body `{agentCode?, sessionId?, pageKey, message}`，`pageKey` 必填 |
-| GET | `/api/agent/chat/bootstrap` | `agent:chat` | 当前页可用 Agent；没有返回 `enabled=false` |
+| GET | `/api/agent/chat/bootstrap` | `agent:chat` | 当前页可用 Agent（`agentId/agentCode/agentName`）；没有返回 `enabled=false` |
 | POST | `/api/agent/hitl/{id}/decision` | `agent:chat` | HITL 决策（同意/拒绝），返回 SSE 继续同一会话 |
 | GET | `/api/agent/hitl/pending` | `agent:chat` | 会话内待审批项，刷新后恢复审批卡 |
 | POST | `/api/agent/external-calls/{callId}/result` | `agent:chat` | 外部工具执行结果回传，返回 SSE 恢复模型 |
+
+`sessionId` 必须属于当前 `agentCode` 对应的 Agent：不一致时后端新建会话（`session` 事件返回新 id），
+不复用其他 Agent 的上下文与工具配置。前端用 `bootstrap` 返回的 `agentId` 判断历史会话归属，
+切换到其他 Agent 的会话时提示新建对话。
 
 ### 会话
 
@@ -295,6 +345,23 @@ Schema 有字段白名单，禁 `script` / `expression` 类键。
 | GET | `/api/agent/sessions` | `agent:session:view` | 我的会话；`all=true` 仅管理员可看全部 |
 | GET | `/api/agent/sessions/{id}/messages` | `agent:session:view` | 历史消息与 blocks |
 | DELETE | `/api/agent/sessions/{id}` | `agent:session:view` | 逻辑删除自己的会话 |
+| GET | `/api/agent/sessions/{id}/context-usage` | `agent:chat` | 当前模型上下文估算（`estimatedTokens/contextWindow/percent/messageCount`），分母取 Agent 的 `contextWindow` |
+| POST | `/api/agent/sessions/{id}/compact` | `agent:chat` | 手动压缩：调用 AgentScope 官方 `ConversationCompactor`（工具结果裁剪 + 官方摘要 prompt），摘要写回 agentscope `AgentState`，`keepMessages` 默认 20；返回压缩前后 token/消息数。自动压缩由官方 `CompactionMiddleware` 在每轮推理前执行 |
+
+### 观测
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/agent/observe/sessions` | `agent:metrics:view` | 全租户会话列表；`agentId/userId/keyword/page/size` |
+| GET | `/api/agent/observe/sessions/{id}` | `agent:metrics:view` | 会话详情：`session/systemPrompt/modelCallCount/runs/mergedRequest` |
+| GET | `/api/agent/observe/agents` | `agent:metrics:view` | 筛选下拉的精简 Agent 选项 |
+| GET | `/api/agent/observe/export` | `agent:metrics:view` | 批量导出 JSON（流式）；`scope=all/filtered`、`limit<=500`、`pretty` |
+| GET | `/api/agent/observe/sessions/{id}/export` | `agent:metrics:view` | 单会话导出 |
+
+`mergedRequest` 只取消息最多的一次调用（请求体是累积的，逐次返回会 MB 级重复），
+末尾补最后一条助手回复；详情不返回每次调用的原始 `request`，调用次数用 `modelCallCount`。
+批量导出按会话流式写出（`Transfer-Encoding: chunked`），默认 gzip 压缩；
+导出路径已在 `CachedResponseFilter` 中跳过，不能被响应缓存包装。
 
 ### 配置
 
@@ -303,7 +370,7 @@ Schema 有字段白名单，禁 `script` / `expression` 类键。
 | GET | `/api/agent/definitions` | `agent:config:view` | 定义列表 |
 | POST | `/api/agent/definitions` | `agent:config:edit` | 新建 |
 | PUT | `/api/agent/definitions/{id}` | `agent:config:edit` | 修改；revision 变化会让运行时缓存失效 |
-| DELETE | `/api/agent/definitions/{id}` | `agent:config:edit` | 删除 |
+| DELETE | `/api/agent/definitions/{id}` | `agent:config:edit` | 删除；同一事务内先清理该 Agent 的会话、HITL、外部调用，再删定义（工具/技能绑定由外键级联） |
 | GET | `/api/agent/definitions/{id}/tools` | `agent:config:view` | 工具目录 + 当前策略 |
 | PUT | `/api/agent/definitions/{id}/tools` | `agent:config:edit` | 保存工具启停/审批策略 |
 | GET | `/api/agent/definitions/{id}/skills` | `agent:config:view` | 技能索引 + 绑定状态 |

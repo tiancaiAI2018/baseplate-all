@@ -35,12 +35,16 @@ baseplate:
     trace-header: X-Trace-Id
   agent:
     max-iters: 4
-    stream-timeout-seconds: 120
+    stream-timeout-seconds: ${BASEPLATE_AGENT_STREAM_TIMEOUT_SECONDS:600}
     skill-dir: ./skills
     # 内部工具暴露方式：cli（baseplate 命令行）/ meta（三个元工具）/ direct（全量直挂）
     tool-exposure-mode: ${BASEPLATE_AGENT_TOOL_EXPOSURE_MODE:cli}
     # 是否自动挂载对应的入口技能（工具检索 / 工具元调用）
     tool-exposure-skill: ${BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL:true}
+    # 会话上下文自动压缩：超过占用阈值时生成摘要，只保留最近 N 条消息
+    compaction-enabled: ${BASEPLATE_AGENT_COMPACTION_ENABLED:true}
+    compaction-threshold: ${BASEPLATE_AGENT_COMPACTION_THRESHOLD:80}
+    compaction-keep-messages: ${BASEPLATE_AGENT_COMPACTION_KEEP_MESSAGES:20}
   identity:
     default-tenant: default
     password-expire-enabled: false
@@ -54,6 +58,11 @@ baseplate:
 
 server:
   port: 8080
+  compression:
+    enabled: true
+    min-response-size: 2KB
+    # 只压缩普通 JSON/文本；不要加 text/event-stream，避免 SSE 被缓冲
+    mime-types: application/json,application/xml,text/plain,text/css,text/javascript,application/javascript
 
 management:
   endpoints:

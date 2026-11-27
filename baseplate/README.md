@@ -13,7 +13,7 @@ agentscope-core 2.0.4 · Vue 3 + Vite + Element Plus + bpmn-js
 
 | 指标 | 数值 |
 |---|---|
-| Maven 模块 | 18（其中 9 个能力 starter，1 个唯一可执行制品） |
+| Maven 模块 | 20（其中 11 个能力 starter，1 个唯一可执行制品） |
 | Java 源文件 | 247（main，不含测试） |
 | REST 方法映射 | 137 |
 | 数据库表 | 约 95（Flowable `act_*` 56 + 基盘迁移建表 39） |
@@ -103,7 +103,8 @@ npm run dev        # http://127.0.0.1:5173，/api 由 Vite 代理到 8080
 - **页面作用域**：工具声明 `pages`，运行时不匹配当前 `pageKey` 的 schema 不会进模型上下文；会话继续时同步 `session.page_key`，避免恢复流报 `Tool not found`
 - **HITL**：审批策略为 `ASK` 的工具先落审批单，用户同意后带 `ConfirmResult` 恢复同一会话；CLI/元工具入口会解析脚本里被调用的工具码，命中 `ASK` 时代表它请求确认，命中 `EXTERNAL` 时抛 `ToolSuspendException` 交给前端执行，两条路径都保持与直连模式一致的人工确认与外部执行语义
 - **外部工具结果回传**：前端执行完调用 `/api/agent/external-calls/{callId}/result`，服务端恢复 SSE；多个调用按 `replyId` 收齐后再恢复
-- **UI 卡片**：工具结果可带 `ui: { kind: "task_list" | "workflow_preview", ... }`，服务端转成独立 `ui` 事件，前端渲染任务卡片 / bpmn-js 流程图缩略图；`ui` 会从模型上下文剔除
+- **UI 卡片**：工具结果可带 `ui: { kind: "task_list" | "workflow_preview" | "chart" | "table", ... }`，服务端转成独立 `ui` 事件，前端渲染任务卡片 / bpmn-js 流程图缩略图 / 柱状图 / 数据表格；`ui` 会从模型上下文剔除
+- **DataAgent**：独立 `data-agent`，用自然语言查当前 PostgreSQL。工具含 `datasource.sales_db.search`（LIST_TABLES / FIND_TABLES / GET_TABLE_SCHEMA / GET_RELATED_TABLES / PREVIEW_ROWS / SEARCH）、`semantic_model.search`、`domain_business_knowledge.search`、`sql_guard.check`。只执行只读 SQL（禁写操作/多语句/危险函数、自动补 LIMIT、10s 超时）；第一版不做缓存（元数据查询快、结果离散、避免时效问题）。聚合结果自动输出 `chart` 卡片
 - **技能（Skill）**：`baseplate/skills/<名称>/SKILL.md` 由 `SkillIndexService` 扫描、建索引，可在控制台在线编辑 / zip 导入 / 按 Agent 绑定；收敛模式会自动切换到专属技能集：`cli` 只挂 frontmatter 声明 `modes: cli` 的技能（CLI 业务技能用 `call` 语法重写，负责业务理解与多工具串联），`meta` 只挂 `modes: meta` 的技能（同样的业务知识用元工具语法重写），`direct` 挂 Agent 原本绑定的技能。归属由技能文件自己声明、不在代码写死，页面新增技能填「适用模式」即可自动进对应模式；由 `BASEPLATE_AGENT_TOOL_EXPOSURE_SKILL`（默认 `true`）控制。技能正文只存在 SKILL.md 里、由模型按需 `load_skill_through_path` 加载，不写进 system prompt；固定 skillId 后缀为 `_baseplate`
 
 默认内置工具：

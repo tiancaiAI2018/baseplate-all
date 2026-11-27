@@ -23,6 +23,7 @@ Spring Boot 4.1.2 / Java 21 模块化单体。19 个 Maven 模块（10 个能力
 | `baseplate-metadata-starter` | 低代码元数据 |
 | `baseplate-agent-starter` | 智能体：定义/会话/工具/技能/HITL/SSE |
 | `baseplate-agent-workflow-starter` | workflow/form 工具声明 |
+| `baseplate-dataagent-starter` | DataAgent：元数据发现、只读 SQL、语义/口径与 sql_guard，输出表格/柱状图卡片 |
 | `baseplate-cend-starter` | C 端页面公开接口与智能体工具 |
 | `baseplate-bootstrap` | 启动入口、配置、静态资源 |
 

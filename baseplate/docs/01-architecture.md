@@ -87,11 +87,12 @@ public OpenApiAuthFilter(..., UserDirectory userDirectory) { ... }
 | `baseplate-identity-starter` | 用户/角色/组织/权限目录、登录、密码策略 | 23 |
 | `baseplate-audit-starter` | 访问/业务/登录三类审计 + 查询接口 | 5 |
 | `baseplate-platform-starter` | 开放平台：双凭证、注解暴露、主体区分、授权码 | 21 |
-| `baseplate-workflow-starter` | Flowable 8 封装（BPMN 校验、部署、发起、办理、草稿、节点配置编译） | 17 |
+| `baseplate-workflow-starter` | Flowable 8 封装（BPMN 校验、部署、发起、办理、草稿、节点配置编译、组织池分单） | 17 |
 | `baseplate-rule-starter` | 结构化规则引擎（字段+运算符+值） | 10 |
 | `baseplate-metadata-starter` | 低代码元数据（FORM/LIST/FLOW 三类 Schema + 作废） | 3 |
 | `baseplate-agent-starter` | 智能体平台：定义/会话/工具/技能/HITL/外部调用/SSE | 38 |
 | `baseplate-agent-workflow-starter` | 智能体的工作流与表单工具声明和服务端只读实现 | 5 |
+| `baseplate-dataagent-starter` | DataAgent：information_schema 元数据发现、只读 SQL、语义/口径与 sql_guard | 8 |
 | `baseplate-bootstrap` | 唯一可执行制品，内嵌前端静态资源 | 3 |
 
 > `baseplate-application` 与 `baseplate-starter` 目前**没有实际逻辑**。前者是留给将来跨模块编排的位置，
