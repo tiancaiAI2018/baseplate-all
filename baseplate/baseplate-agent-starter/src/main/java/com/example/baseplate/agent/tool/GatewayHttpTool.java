@@ -21,14 +21,24 @@ public final class GatewayHttpTool extends ToolBase {
     private final ExternalServiceGateway gateway;
 
     public GatewayHttpTool(ExternalToolDescriptor descriptor, ExternalServiceGateway gateway) {
+        this(descriptor.code(), descriptor.serviceCode(), descriptor.endpointCode(),
+                descriptor.description(), descriptor.paramsSchema(),
+                descriptor.permissionCode(), gateway);
+    }
+
+    /** 控制台创建的端点绑定工具：只绑定 serviceCode/endpointCode，URL 与凭证仍由网关注入。 */
+    public GatewayHttpTool(String toolCode, String serviceCode, String endpointCode,
+                           String description, Map<String, Object> paramsSchema,
+                           String permissionCode, ExternalServiceGateway gateway) {
         super(ToolBase.builder()
-                .name(descriptor.code())
-                .description(descriptor.description())
-                .inputSchema(descriptor.paramsSchema() == null || descriptor.paramsSchema().isEmpty()
-                        ? Map.of("type", "object", "properties", Map.of()) : descriptor.paramsSchema())
+                .name(toolCode)
+                .description(description == null || description.isBlank() ? toolCode : description)
+                .inputSchema(paramsSchema == null || paramsSchema.isEmpty()
+                        ? Map.of("type", "object", "properties", Map.of()) : paramsSchema)
                 .readOnly(true)
                 .concurrencySafe(true));
-        this.descriptor = descriptor;
+        this.descriptor = new ExternalToolDescriptor(toolCode, toolCode, description,
+                serviceCode, endpointCode, true, paramsSchema, java.util.Set.of("*"), permissionCode);
         this.gateway = gateway;
     }
 

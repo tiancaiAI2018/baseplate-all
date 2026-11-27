@@ -11,9 +11,12 @@ permissions:
   - { code: "openapi:update", label: 编辑应用, type: BUTTON }
   - { code: "openapi:rotate", label: 轮换密钥, type: BUTTON }
   - { code: "openapi:log", label: 查看调用日志, type: BUTTON }
+  - { code: "integration:service:view", label: 查看外部服务, type: MENU }
+  - { code: "integration:service:edit", label: 编辑外部服务, type: BUTTON }
 
 menus:
   - { path: /platform/apps, label: 开放平台, permission: "openapi:view", icon: Connection }
+  - { path: /integration/services, label: 外部服务, permission: "integration:service:view", icon: Connection }
 
 rule-fields:
   - { name: appKey, label: 应用Key, type: STRING }

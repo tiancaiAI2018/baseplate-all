@@ -12,7 +12,6 @@ import com.example.baseplate.agent.adapter.out.persistence.AgentSkillIndexReposi
 import com.example.baseplate.agent.application.AgentChatService;
 import com.example.baseplate.agent.application.AgentConfigService;
 import com.example.baseplate.agent.application.AgentContextService;
-import com.example.baseplate.agent.tool.ExternalServiceToolProvider;
 import com.example.baseplate.agent.application.AgentObserveService;
 import com.example.baseplate.agent.application.AgentSessionService;
 import com.example.baseplate.agent.application.SkillIndexService;
@@ -24,7 +23,6 @@ import com.example.baseplate.agent.tool.PlatformToolProvider;
 import com.example.baseplate.agent.tool.ToolRegistry;
 import com.example.baseplate.api.port.out.CurrentUserProvider;
 import com.example.baseplate.api.port.out.ExternalServiceGateway;
-import com.example.baseplate.api.port.out.ExternalToolDescriptorProvider;
 import com.example.baseplate.security.autoconfigure.SecurityAutoConfiguration;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.state.AgentStateStore;
@@ -130,18 +128,12 @@ public class AgentAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ToolRegistry agentToolRegistry(ObjectProvider<AgentToolProvider> providers,
-                                           ObjectProvider<ExternalToolDescriptorProvider> descriptorProviders,
-                                           ObjectProvider<ExternalServiceGateway> gateways) {
+    public ToolRegistry agentToolRegistry(ObjectProvider<AgentToolProvider> providers) {
         List<AgentToolProvider> all = new ArrayList<>();
         providers.orderedStream().forEach(all::add);
         // 平台只读工具是模块自带能力，不依赖其它 starter
         all.add(new PlatformToolProvider());
-        // 平台注册表中的外部服务端点投影成 Agent 工具
-        ExternalServiceGateway gateway = gateways.getIfAvailable();
-        if (gateway != null) {
-            all.add(new ExternalServiceToolProvider(descriptorProviders, gateway));
-        }
+        // 平台注册端点不再自动投影成工具：页面「从端点选用」显式创建工具时才绑定
         return new ToolRegistry(all);
     }
 
@@ -171,9 +163,11 @@ public class AgentAutoConfiguration {
                                                    AgentStateStore agentStateStore,
                                                    SkillIndexService skillIndexService,
                                                    AgentDefinitionRepository definitionRepository,
-                                                   AgentModelCallRepository modelCallRepository) {
+                                                   AgentModelCallRepository modelCallRepository,
+                                                   ObjectProvider<ExternalServiceGateway> gateways) {
         return new AgentRuntimeFactory(toolRegistry, modelProviderFactory, properties,
-                agentStateStore, skillIndexService, definitionRepository, modelCallRepository);
+                agentStateStore, skillIndexService, definitionRepository, modelCallRepository,
+                gateways.getIfAvailable());
     }
 
     @Bean

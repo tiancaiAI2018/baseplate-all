@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -34,8 +35,15 @@ public class AgentToolDirectoryController {
 
     @GetMapping("/directory")
     @RequiresPermission("agent:config:view")
-    public List<ToolDefinitionView> directory() {
-        return configService.toolDirectory(tenant());
+    public Object directory(@RequestParam(required = false) String group,
+                            @RequestParam(required = false) String keyword,
+                            @RequestParam(defaultValue = "1") int page,
+                            @RequestParam(defaultValue = "50") int size) {
+        // 不传任何筛选参数时保持旧的数组响应，兼容已有调用方
+        if (group == null && keyword == null) {
+            return configService.toolDirectory(tenant());
+        }
+        return configService.toolDirectory(tenant(), group, keyword, page, size);
     }
 
     @PostMapping("/directory")

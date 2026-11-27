@@ -59,6 +59,10 @@
             <el-menu-item v-if="auth.has('openapi:view')" index="/platform/apis">
               <el-icon><Files /></el-icon><template #title>接口目录</template>
             </el-menu-item>
+            <el-menu-item v-if="auth.has('integration:service:view') || auth.isSuperAdmin"
+                          index="/integration/services">
+              <el-icon><Link /></el-icon><template #title>外部服务</template>
+            </el-menu-item>
           </el-menu-item-group>
           <el-menu-item-group v-if="!collapsed" title="治理与配置">
             <el-menu-item v-if="auth.has('audit:view')" index="/audit/logs">
@@ -140,7 +144,7 @@ import { ElMessage } from 'element-plus'
 import {
   Odometer, User, Key, OfficeBuilding, Connection, Document,
   SetUp, Share, Fold, Expand, ArrowDown, Files, Promotion, Bell, Tickets, MagicStick,
-  DataLine
+  DataLine, Link
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 import { useWorkflowStore } from '../stores/workflow'

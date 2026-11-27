@@ -12,8 +12,10 @@ import com.example.baseplate.agent.domain.ApprovalMode;
 import com.example.baseplate.agent.domain.ToolType;
 import com.example.baseplate.agent.model.ModelProviderFactory;
 import com.example.baseplate.agent.tool.AgentToolSpec;
+import com.example.baseplate.agent.tool.GatewayHttpTool;
 import com.example.baseplate.agent.tool.HttpApiTool;
 import com.example.baseplate.agent.tool.ToolCliTool;
+import com.example.baseplate.api.port.out.ExternalServiceGateway;
 import com.example.baseplate.agent.tool.ToolDescriptor;
 import com.example.baseplate.agent.tool.ToolDirectory;
 import com.example.baseplate.agent.tool.ToolMetaTool;
@@ -27,6 +29,7 @@ import io.agentscope.core.permission.PermissionMode;
 import io.agentscope.core.permission.PermissionRule;
 import io.agentscope.core.skill.SkillFilter;
 import io.agentscope.core.state.AgentStateStore;
+import io.agentscope.core.tool.AgentTool;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.harness.agent.middleware.CompactionMiddleware;
 
@@ -67,13 +70,15 @@ public final class AgentRuntimeFactory {
     private final SkillIndexService skillIndexService;
     private final AgentDefinitionRepository definitionRepository;
     private final AgentModelCallRepository modelCallRepository;
+    private final ExternalServiceGateway externalGateway;
     private final Map<String, ReActAgent> cache = new ConcurrentHashMap<>();
 
     public AgentRuntimeFactory(ToolRegistry toolRegistry, ModelProviderFactory modelFactory,
                                AgentProperties properties, AgentStateStore stateStore,
                                SkillIndexService skillIndexService,
                                AgentDefinitionRepository definitionRepository,
-                               AgentModelCallRepository modelCallRepository) {
+                               AgentModelCallRepository modelCallRepository,
+                               ExternalServiceGateway externalGateway) {
         this.toolRegistry = toolRegistry;
         this.modelFactory = modelFactory;
         this.properties = properties;
@@ -81,6 +86,7 @@ public final class AgentRuntimeFactory {
         this.skillIndexService = skillIndexService;
         this.definitionRepository = definitionRepository;
         this.modelCallRepository = modelCallRepository;
+        this.externalGateway = externalGateway;
     }
 
     public ReActAgent get(String tenant, AgentDefinition definition,
@@ -193,10 +199,20 @@ public final class AgentRuntimeFactory {
                                 .build());
                     }
                 } else if (row.toolType() == ToolType.CUSTOM_INTERNAL) {
-                    // 服务端 HTTP 工具：参数、超时、内网拦截都在 HttpApiTool 里
-                    HttpApiTool tool = new HttpApiTool(row.toolCode(), row.name(),
-                            row.description(), row.paramsSchema(), row.config(),
-                            row.permissionCode());
+                    // 端点绑定工具：URL/凭证由平台网关注入；其余走普通 HTTP 工具
+                    Map<String, Object> toolConfig = row.config() == null ? Map.of() : row.config();
+                    String serviceCode = str(toolConfig.get("serviceCode"));
+                    String endpointCode = str(toolConfig.get("endpointCode"));
+                    AgentTool tool;
+                    if (!serviceCode.isBlank() && !endpointCode.isBlank()) {
+                        tool = new GatewayHttpTool(row.toolCode(), serviceCode, endpointCode,
+                                row.description(), row.paramsSchema(), row.permissionCode(),
+                                externalGateway);
+                    } else {
+                        tool = new HttpApiTool(row.toolCode(), row.name(),
+                                row.description(), row.paramsSchema(), toolConfig,
+                                row.permissionCode());
+                    }
                     if (policies.get(row.toolCode()) == ApprovalMode.ASK) {
                         if (!compact) {
                             toolkit.registerAgentTool(tool);
@@ -384,5 +400,9 @@ public final class AgentRuntimeFactory {
     /** 技能目录重扫后所有实例都要重建，技能快照不是按 Agent 隔离的。 */
     public void invalidateAll() {
         cache.clear();
+    }
+
+    private static String str(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 }

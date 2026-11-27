@@ -8,6 +8,7 @@ import com.example.baseplate.api.port.out.RateLimiter;
 import com.example.baseplate.api.port.out.UserDirectory;
 import com.example.baseplate.platform.adapter.in.web.OpenApiAnnotationScanner;
 import com.example.baseplate.platform.adapter.in.web.OpenApiAuthFilter;
+import com.example.baseplate.platform.adapter.out.persistence.ExternalServiceCatalogRepository;
 import com.example.baseplate.platform.adapter.out.persistence.OpenApiCatalogRepository;
 import com.example.baseplate.platform.adapter.out.persistence.OpenAppRepository;
 import com.example.baseplate.platform.adapter.out.persistence.OpenAuthCodeRepository;
@@ -51,8 +52,15 @@ public class PlatformAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public ExternalServiceRegistry externalServiceRegistry(SecretCipher cipher) {
-        return new ExternalServiceRegistry(cipher);
+    public ExternalServiceCatalogRepository externalServiceCatalogRepository(JdbcTemplate jdbcTemplate) {
+        return new ExternalServiceCatalogRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ExternalServiceRegistry externalServiceRegistry(ExternalServiceCatalogRepository repository,
+                                                           SecretCipher cipher) {
+        return new ExternalServiceRegistry(repository, cipher);
     }
 
     @Bean

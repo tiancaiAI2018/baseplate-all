@@ -115,7 +115,9 @@ export const agentApi = {
     }
     return http.post<{ imported: number }>('/api/agent/skills/upload-folder', form)
   },
-  toolDirectory: () => http.get<ToolDefinitionView[]>('/api/agent/tools/directory'),
+  toolDirectory: (query: ToolDirectoryQuery = {}) =>
+    // 旧版返回数组，新版返回带分组/分页的对象；两层兼容由调用方处理
+    http.get<ToolDirectoryResult>('/api/agent/tools/directory', { params: query }),
   createTool: (payload: ToolDefinitionPayload) =>
     http.post<ToolDefinitionView>('/api/agent/tools/directory', payload),
   updateTool: (toolCode: string, payload: ToolDefinitionPayload) =>
@@ -137,6 +139,10 @@ export interface ToolDefinitionView {
   defaultApproval: string
   paramsSchema: Record<string, any>
   config: Record<string, any>
+  groupName?: string
+  source?: string
+  endpointServiceCode?: string
+  endpointCode?: string
 }
 
 export interface ToolDefinitionPayload {
@@ -151,4 +157,21 @@ export interface ToolDefinitionPayload {
   defaultApproval: string
   paramsSchema: Record<string, any>
   config: Record<string, any>
+  groupName?: string
 }
+
+export interface ToolDirectoryQuery {
+  group?: string
+  keyword?: string
+  page?: number
+  size?: number
+}
+
+/** 新版目录响应（带分组与分页）；旧版接口直接返回数组。 */
+export interface ToolDirectoryPage {
+  items: ToolDefinitionView[]
+  total: number
+  groups: string[]
+}
+
+export type ToolDirectoryResult = ToolDefinitionView[] | ToolDirectoryPage

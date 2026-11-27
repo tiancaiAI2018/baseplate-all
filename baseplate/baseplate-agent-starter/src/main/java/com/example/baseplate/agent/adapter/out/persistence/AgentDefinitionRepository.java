@@ -8,6 +8,7 @@ import com.example.baseplate.agent.tool.ToolDescriptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -72,10 +73,11 @@ public final class AgentDefinitionRepository {
             ApprovalMode minApproval,
             ApprovalMode defaultApproval,
             Map<String, Object> paramsSchema,
-            Map<String, Object> config) {
+            Map<String, Object> config,
+            String groupName) {
     }
 
-    /** 控制台创建自定义工具（当前支持 EXTERNAL）的入参。 */
+    /** 控制台创建自定义工具（支持 EXTERNAL / CUSTOM_INTERNAL）的入参。 */
     public record CustomToolInput(
             String toolCode,
             String name,
@@ -87,7 +89,8 @@ public final class AgentDefinitionRepository {
             ApprovalMode minApproval,
             ApprovalMode defaultApproval,
             Map<String, Object> paramsSchema,
-            Map<String, Object> config) {
+            Map<String, Object> config,
+            String groupName) {
     }
 
     private final RowMapper<AgentDefinition> DEFINITION_MAPPER = (rs, i) -> new AgentDefinition(
@@ -255,18 +258,78 @@ public final class AgentDefinitionRepository {
         return jdbc.query("""
                 SELECT tool_code, name, description, tool_type, builtin, editable, pages,
                        permission_code, risk_level, min_approval, default_approval,
-                       params_schema, config
+                       params_schema, config, group_name
                   FROM agent_tool_definition
                  WHERE tenant_id IN ('*', ?)
                  ORDER BY builtin DESC, tool_code
                 """, this::mapToolRow, tenant);
     }
 
+    /** 控制台目录：分组 + 关键词 + 分页。 */
+    public List<ToolCatalogRow> searchToolCatalog(String tenant, String group,
+                                                   String keyword, int offset, int size) {
+        List<Object> args = toolArgs(tenant, group, keyword);
+        args.add(size);
+        args.add(offset);
+        return jdbc.query(TOOL_SELECT + toolWhere(group, keyword)
+                        + " ORDER BY builtin DESC, group_name NULLS LAST, tool_code LIMIT ? OFFSET ?",
+                this::mapToolRow, args.toArray());
+    }
+
+    public long countToolCatalog(String tenant, String group, String keyword) {
+        Long count = jdbc.queryForObject(
+                "SELECT count(*) FROM agent_tool_definition" + toolWhere(group, keyword),
+                Long.class, toolArgs(tenant, group, keyword).toArray());
+        return count == null ? 0 : count;
+    }
+
+    public List<String> toolGroups(String tenant) {
+        return jdbc.queryForList("""
+                SELECT DISTINCT group_name FROM agent_tool_definition
+                 WHERE tenant_id IN ('*', ?) AND group_name IS NOT NULL AND group_name <> ''
+                 ORDER BY group_name
+                """, String.class, tenant);
+    }
+
+    private static final String TOOL_SELECT = """
+            SELECT tool_code, name, description, tool_type, builtin, editable, pages,
+                   permission_code, risk_level, min_approval, default_approval,
+                   params_schema, config, group_name
+              FROM agent_tool_definition
+            """;
+
+    private String toolWhere(String group, String keyword) {
+        StringBuilder sql = new StringBuilder(" WHERE tenant_id IN ('*', ?)");
+        if (group != null && !group.isBlank()) {
+            sql.append(" AND group_name = ?");
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            sql.append(" AND (lower(tool_code) LIKE lower(?) OR lower(name) LIKE lower(?)"
+                    + " OR lower(coalesce(description, '')) LIKE lower(?))");
+        }
+        return sql.toString();
+    }
+
+    private List<Object> toolArgs(String tenant, String group, String keyword) {
+        List<Object> args = new ArrayList<>();
+        args.add(tenant);
+        if (group != null && !group.isBlank()) {
+            args.add(group.trim());
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String like = "%" + keyword.trim() + "%";
+            args.add(like);
+            args.add(like);
+            args.add(like);
+        }
+        return args;
+    }
+
     public Optional<ToolCatalogRow> findTool(String tenant, String toolCode) {
         return jdbc.query("""
                 SELECT tool_code, name, description, tool_type, builtin, editable, pages,
                        permission_code, risk_level, min_approval, default_approval,
-                       params_schema, config
+                       params_schema, config, group_name
                   FROM agent_tool_definition
                  WHERE tenant_id IN ('*', ?) AND tool_code = ?
                  ORDER BY builtin DESC
@@ -279,13 +342,13 @@ public final class AgentDefinitionRepository {
                 INSERT INTO agent_tool_definition
                     (tenant_id, tool_code, name, description, tool_type, builtin, editable,
                      pages, permission_code, risk_level, min_approval, default_approval,
-                     params_schema, config, status)
-                VALUES (?, ?, ?, ?, ?, FALSE, TRUE, ?::jsonb, ?, ?, ?, ?, ?::jsonb, ?::jsonb, 'ENABLED')
+                     params_schema, config, status, group_name)
+                VALUES (?, ?, ?, ?, ?, FALSE, TRUE, ?::jsonb, ?, ?, ?, ?, ?::jsonb, ?::jsonb, 'ENABLED', ?)
                 """, tenant, input.toolCode(), input.name(), input.description(),
                 input.toolType().name(), writeJson(input.pages()), input.permissionCode(),
                 input.riskLevel().name(), input.minApproval().name(),
                 input.defaultApproval().name(), writeJson(input.paramsSchema()),
-                writeJson(input.config()));
+                writeJson(input.config()), input.groupName());
     }
 
     /** 只允许改自定义工具；内置工具在 SQL 层就被 editable=TRUE 拦住。 */
@@ -294,12 +357,12 @@ public final class AgentDefinitionRepository {
                 UPDATE agent_tool_definition
                    SET name = ?, description = ?, tool_type = ?, pages = ?::jsonb,
                        permission_code = ?, risk_level = ?, min_approval = ?, default_approval = ?,
-                       params_schema = ?::jsonb, config = ?::jsonb, updated_at = now()
+                       params_schema = ?::jsonb, config = ?::jsonb, group_name = ?, updated_at = now()
                  WHERE tenant_id = ? AND tool_code = ? AND editable = TRUE AND builtin = FALSE
                 """, input.name(), input.description(), input.toolType().name(),
                 writeJson(input.pages()), input.permissionCode(), input.riskLevel().name(),
                 input.minApproval().name(), input.defaultApproval().name(),
-                writeJson(input.paramsSchema()), writeJson(input.config()),
+                writeJson(input.paramsSchema()), writeJson(input.config()), input.groupName(),
                 tenant, toolCode) > 0;
     }
 
@@ -329,7 +392,8 @@ public final class AgentDefinitionRepository {
                 ApprovalMode.valueOf(rs.getString("min_approval")),
                 ApprovalMode.valueOf(rs.getString("default_approval")),
                 readMap(rs.getString("params_schema")),
-                readMap(rs.getString("config")));
+                readMap(rs.getString("config")),
+                rs.getString("group_name"));
     }
 
     private String writeJson(Object value) {

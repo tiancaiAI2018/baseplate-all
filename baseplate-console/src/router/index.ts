@@ -23,6 +23,7 @@ const router = createRouter({
         { path: 'identity/orgs', component: () => import('../views/OrgsView.vue'), meta: { title: '组织架构' } },
         { path: 'platform/apps', component: () => import('../views/OpenAppsView.vue'), meta: { title: '开放平台' } },
         { path: 'platform/apis', component: () => import('../views/ApiCatalogView.vue'), meta: { title: '接口目录' } },
+        { path: 'integration/services', component: () => import('../views/IntegrationServiceView.vue'), meta: { title: '外部服务' } },
         { path: 'audit/logs', component: () => import('../views/AuditView.vue'), meta: { title: '审计日志' } },
         { path: 'rule/config', component: () => import('../views/RulesView.vue'), meta: { title: '规则引擎' } },
         { path: 'workflow/start', component: () => import('../views/ProcessStartView.vue'), meta: { title: '发起流程' } },

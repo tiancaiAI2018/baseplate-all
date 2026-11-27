@@ -131,7 +131,7 @@ public final class AgentConfigService {
             String effectiveApproval) {
     }
 
-    /** 工具目录视图：内置工具只读，自定义外部工具可编辑。 */
+    /** 工具目录视图：内置工具只读，自定义工具可编辑。 */
     public record ToolDefinitionView(
             String toolCode,
             String name,
@@ -145,7 +145,18 @@ public final class AgentConfigService {
             String minApproval,
             String defaultApproval,
             Map<String, Object> paramsSchema,
-            Map<String, Object> config) {
+            Map<String, Object> config,
+            String groupName,
+            String source,
+            String endpointServiceCode,
+            String endpointCode) {
+    }
+
+    /** 控制台目录查询：分组 / 关键词 / 分页。 */
+    public record ToolDirectoryView(
+            List<ToolDefinitionView> items,
+            long total,
+            List<String> groups) {
     }
 
     public record ToolDefinitionRequest(
@@ -159,7 +170,8 @@ public final class AgentConfigService {
             String minApproval,
             String defaultApproval,
             Map<String, Object> paramsSchema,
-            Map<String, Object> config) {
+            Map<String, Object> config,
+            String groupName) {
     }
 
     public List<DefinitionView> list(String tenant) {
@@ -287,11 +299,34 @@ public final class AgentConfigService {
     }
 
     public List<ToolDefinitionView> toolDirectory(String tenant) {
-        return repository.toolCatalog(tenant).stream().map(row -> new ToolDefinitionView(
+        return repository.toolCatalog(tenant).stream().map(this::toToolView).toList();
+    }
+
+    public ToolDirectoryView toolDirectory(String tenant, String group, String keyword,
+                                            int page, int size) {
+        int safePage = Math.max(1, page);
+        int safeSize = Math.max(1, Math.min(200, size));
+        List<ToolDefinitionView> items = repository
+                .searchToolCatalog(tenant, group, keyword, (safePage - 1) * safeSize, safeSize)
+                .stream().map(this::toToolView).toList();
+        return new ToolDirectoryView(items, repository.countToolCatalog(tenant, group, keyword),
+                repository.toolGroups(tenant));
+    }
+
+    private ToolDefinitionView toToolView(AgentDefinitionRepository.ToolCatalogRow row) {
+        Map<String, Object> config = row.config() == null ? Map.of() : row.config();
+        String source = "ENDPOINT".equals(config.get("source")) ? "ENDPOINT"
+                : (row.builtin() ? "BUILTIN" : "MANUAL");
+        return new ToolDefinitionView(
                 row.toolCode(), row.name(), row.description(), row.toolType().name(),
                 row.builtin(), row.editable(), row.pages(), row.permissionCode(),
                 row.riskLevel().name(), row.minApproval().name(), row.defaultApproval().name(),
-                row.paramsSchema(), row.config())).toList();
+                row.paramsSchema(), row.config(), row.groupName(), source,
+                text(config.get("serviceCode")), text(config.get("endpointCode")));
+    }
+
+    private static String text(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 
     public ToolDefinitionView createTool(String tenant, ToolDefinitionRequest request) {
@@ -300,11 +335,7 @@ public final class AgentConfigService {
             throw new BaseplateException("CONFLICT", "工具编码已存在: " + input.toolCode());
         }
         repository.insertCustomTool(tenant, input);
-        return repository.findTool(tenant, input.toolCode()).map(row -> new ToolDefinitionView(
-                row.toolCode(), row.name(), row.description(), row.toolType().name(),
-                row.builtin(), row.editable(), row.pages(), row.permissionCode(),
-                row.riskLevel().name(), row.minApproval().name(), row.defaultApproval().name(),
-                row.paramsSchema(), row.config()))
+        return repository.findTool(tenant, input.toolCode()).map(this::toToolView)
                 .orElseThrow(() -> new BaseplateException("INTERNAL_ERROR", "工具创建失败"));
     }
 
@@ -313,17 +344,14 @@ public final class AgentConfigService {
         ToolDefinitionRequest normalized = new ToolDefinitionRequest(toolCode, request.name(),
                 request.description(), request.toolType(), request.pages(),
                 request.permissionCode(), request.riskLevel(), request.minApproval(),
-                request.defaultApproval(), request.paramsSchema(), request.config());
+                request.defaultApproval(), request.paramsSchema(), request.config(),
+                request.groupName());
         CustomToolInput input = validateTool(normalized);
         if (!repository.updateCustomTool(tenant, toolCode, input)) {
             throw new BaseplateException("FORBIDDEN", "内置工具只读，不能修改或删除");
         }
         runtimeFactory.invalidateAll();
-        return repository.findTool(tenant, toolCode).map(row -> new ToolDefinitionView(
-                row.toolCode(), row.name(), row.description(), row.toolType().name(),
-                row.builtin(), row.editable(), row.pages(), row.permissionCode(),
-                row.riskLevel().name(), row.minApproval().name(), row.defaultApproval().name(),
-                row.paramsSchema(), row.config()))
+        return repository.findTool(tenant, toolCode).map(this::toToolView)
                 .orElseThrow(() -> new BaseplateException("NOT_FOUND", "工具不存在"));
     }
 
@@ -342,8 +370,10 @@ public final class AgentConfigService {
             throw new IllegalArgumentException("至少绑定一个页面");
         }
         String code = request.toolCode();
-        if (code == null || !code.matches("[a-z][a-z0-9_]{2,63}")) {
-            throw new IllegalArgumentException("工具编码只能由小写字母、数字、下划线组成，长度 3-64");
+        // 平台端点投影的工具编码带点号（loan.draft.prepare），允许点号但不允许连续/首尾点
+        if (code == null || !code.matches("[a-z][a-z0-9_.]{1,62}[a-z0-9]")
+                || code.contains("..") || code.startsWith(".") || code.endsWith(".")) {
+            throw new IllegalArgumentException("工具编码只能由小写字母、数字、下划线和点号组成，长度 3-64");
         }
         ToolType type;
         try {
@@ -357,7 +387,17 @@ public final class AgentConfigService {
         }
         Map<String, Object> config = request.config() == null
                 ? new LinkedHashMap<>() : new LinkedHashMap<>(request.config());
-        if (type == ToolType.CUSTOM_INTERNAL) {
+        String serviceCode = text(config.get("serviceCode"));
+        String endpointCode = text(config.get("endpointCode"));
+        boolean endpointBacked = serviceCode != null && !serviceCode.isBlank()
+                && endpointCode != null && !endpointCode.isBlank();
+        if (endpointBacked) {
+            // 端点工具：URL 与凭证由平台网关解析，不接受页面填写的 url
+            config.put("source", "ENDPOINT");
+            config.remove("url");
+            config.remove("method");
+            config.remove("headers");
+        } else if (type == ToolType.CUSTOM_INTERNAL) {
             HttpApiTool.validateUrl(String.valueOf(config.get("url")));
             String method = config.get("method") == null
                     ? "POST" : String.valueOf(config.get("method")).toUpperCase(Locale.ROOT);
@@ -365,6 +405,7 @@ public final class AgentConfigService {
                 throw new IllegalArgumentException("内部 HTTP 工具只支持 GET/POST");
             }
             config.put("method", method);
+            config.put("source", "MANUAL");
         }
         RiskLevel risk = parseEnum(RiskLevel.class, request.riskLevel(), RiskLevel.WRITE, "风险级别");
         ApprovalMode min = parseEnum(ApprovalMode.class, request.minApproval(),
@@ -379,9 +420,11 @@ public final class AgentConfigService {
         Map<String, Object> schema = request.paramsSchema() == null || request.paramsSchema().isEmpty()
                 ? Map.of("type", "object", "properties", Map.of())
                 : new LinkedHashMap<>(request.paramsSchema());
+        String group = request.groupName() == null || request.groupName().isBlank()
+                ? "未分组" : request.groupName().trim();
         return new CustomToolInput(code, request.name().trim(), request.description(), type,
                 request.pages(), request.permissionCode(), risk, min, defaultApproval,
-                schema, config);
+                schema, config, group);
     }
 
     private <T extends Enum<T>> T parseEnum(Class<T> type, String value, T fallback, String label) {

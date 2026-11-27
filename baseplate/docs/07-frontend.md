@@ -446,9 +446,10 @@ Element Plus 2.9 里 `:value` 不生效，要用 `:model-value` + `@change`：
 | `DispatchPoolView.vue` | 分单池组织范围（默认不含下级）与抢单开关 |
 | `DispatchBoardView.vue` | 分单决策日志、拒绝、惩罚撤销、评价 |
 | `WorkflowLabView.vue` | 一键初始化演练环境（测试账号、演示流程、节点配置） |
-| `AgentConfigView.vue` | 智能体配置：模型、提示词、页面多选、工具策略、技能绑定、测试连接 |
+| `AgentConfigView.vue` | 智能体配置：模型、提示词、页面多选、工具策略、技能绑定、测试连接；工具目录分组/搜索/分页，「从注册端点选用」显式建工具 |
 | `OpenAppsView.vue` | 900px 抽屉 + 6 个 tab；授权树里 USER 类型接口在应用未开通授权码时置灰 |
 | `ApiCatalogView.vue` | 接口目录；启停用 `el-switch` 的 `:model-value` + `@change` |
+| `IntegrationServiceView.vue` | 外部服务/端点管理：服务 CRUD + 端点 CRUD；端点只作可选用目录，不自动注册工具；凭证不回显 |
 
 ---
 

@@ -253,15 +253,24 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="toolDirVisible" title="工具目录" width="900px">
+    <el-dialog v-model="toolDirVisible" title="工具目录" width="960px">
       <div class="hint" style="margin-bottom: 10px">
         内置工具只读；自定义工具当前支持「外部工具」：服务端下发参数，由页面执行后回传结果。
       </div>
-      <div style="margin-bottom: 10px">
-        <el-button size="small" type="primary" :icon="Plus" @click="openCreateTool">新建外部工具</el-button>
+      <div class="toolbar">
+        <el-select v-model="toolDirGroup" placeholder="全部分组" clearable style="width: 180px"
+                   @change="searchToolDirectory">
+          <el-option v-for="group in toolDirGroups" :key="group" :label="group" :value="group" />
+        </el-select>
+        <el-input v-model="toolDirKeyword" placeholder="搜索工具编码 / 名称" clearable
+                  style="width: 220px" :prefix-icon="Search" @keyup.enter="searchToolDirectory" />
+        <el-button type="primary" @click="searchToolDirectory">查询</el-button>
+        <el-button @click="resetToolDirectory">重置</el-button>
+        <div class="spacer"></div>
+        <el-button type="primary" :icon="Plus" @click="openCreateTool">新建外部工具</el-button>
       </div>
       <el-table :data="toolDirectory" size="small" v-loading="toolDirLoading">
-        <el-table-column label="工具" min-width="260">
+        <el-table-column label="工具" min-width="230">
           <template #default="{ row }">
             <div class="name-cell">
               <b>{{ row.name }}</b>
@@ -272,13 +281,23 @@
             <div class="muted">{{ row.toolCode }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="页面" min-width="150">
+        <el-table-column label="分组" width="120">
+          <template #default="{ row }">{{ row.groupName || '未分组' }}</template>
+        </el-table-column>
+        <el-table-column label="来源" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="sourceTag(row.source)" effect="plain">
+              {{ sourceText(row.source) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="页面" min-width="140">
           <template #default="{ row }">
             <span v-if="!row.pages?.length" class="muted">不限</span>
             <span v-for="page in row.pages" :key="page" class="pill">{{ page }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="riskLevel" label="风险" width="110" />
+        <el-table-column prop="riskLevel" label="风险" width="100" />
         <el-table-column label="操作" width="140">
           <template #default="{ row }">
             <template v-if="row.editable">
@@ -289,6 +308,12 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="pager">
+        <el-pagination v-model:current-page="toolDirPage" v-model:page-size="toolDirSize"
+                       :total="toolDirTotal" :page-sizes="[10, 20, 50, 100]"
+                       layout="total, sizes, prev, pager, next, jumper"
+                       @current-change="refreshToolDirectory" @size-change="onToolDirSizeChange" />
+      </div>
     </el-dialog>
 
     <el-dialog v-model="toolFormVisible" :title="toolEditing ? '编辑外部工具' : '新建外部工具'" width="700px">
@@ -308,30 +333,30 @@
         <el-form-item label="说明">
           <el-input v-model="toolForm.description" type="textarea" :rows="2" />
         </el-form-item>
+        <el-form-item label="分组">
+          <el-select v-model="toolForm.groupName" filterable allow-create clearable default-first-option
+                     style="width: 100%" placeholder="选择分组，或输入自定义分组名">
+            <el-option v-for="group in toolDirGroups" :key="group" :label="group" :value="group" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="类型" required>
           <el-radio-group v-model="toolForm.toolType">
             <el-radio value="EXTERNAL">外部工具（前端执行）</el-radio>
             <el-radio value="CUSTOM_INTERNAL">内部 HTTP（服务端执行）</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="platformTools.length" label="平台注册端点">
-          <div class="hint">
-            以下端点已由开发平台注册并保管凭证，会自动投影成 Agent 工具；无需在页面填写 URL 或密钥。
+        <el-form-item v-if="pickedEndpointSummary || toolForm.toolType === 'EXTERNAL'" label="注册端点">
+          <div style="width: 100%">
+            <el-button size="small" :icon="Search" @click="openEndpointPicker">从注册端点选用</el-button>
+            <div v-if="pickedEndpointSummary" class="hint" style="margin-top: 6px">
+              已选用：{{ pickedEndpointSummary }}
+            </div>
+            <div v-else class="hint" style="margin-top: 6px">
+              端点目录只用于回填字段，不会自动注册成工具；凭证由服务端保管。
+            </div>
           </div>
-          <el-table :data="platformTools" size="small" style="width: 100%; margin-top: 6px">
-            <el-table-column prop="code" label="工具编码" min-width="140" />
-            <el-table-column prop="name" label="名称" min-width="130" />
-            <el-table-column label="执行方式" width="120">
-              <template #default="{ row }">
-                <el-tag :type="row.readonly ? 'success' : 'warning'" size="small">
-                  {{ row.readonly ? '服务端只读' : '前端执行' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="serviceCode" label="服务" min-width="110" />
-          </el-table>
         </el-form-item>
-        <el-row v-if="toolForm.toolType === 'CUSTOM_INTERNAL'" :gutter="14">
+        <el-row v-if="toolForm.toolType === 'CUSTOM_INTERNAL' && !pickedEndpointSummary" :gutter="14">
           <el-col :span="16">
             <el-form-item label="URL" required>
               <el-input v-model="toolForm.url" placeholder="https://example.com/api/tool" />
@@ -410,6 +435,39 @@
       <template #footer>
         <el-button @click="toolFormVisible = false">取消</el-button>
         <el-button type="primary" :loading="toolSaving" @click="saveTool">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="endpointPickerVisible" title="从注册端点选用" width="780px" append-to-body>
+      <div class="hint" style="margin-bottom: 10px">
+        端点来自「外部服务」中已注册的服务；选用后只回填本表单字段，不会自动注册成工具。
+      </div>
+      <div class="toolbar">
+        <el-input v-model="endpointPickerKeyword" placeholder="搜索编码 / 名称 / 服务 / 端点" clearable
+                  style="width: 280px" :prefix-icon="Search" />
+      </div>
+      <el-table :data="filteredRegisteredEndpoints" size="small" v-loading="endpointPickerLoading">
+        <el-table-column prop="code" label="工具编码" min-width="140" />
+        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="serviceCode" label="服务" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="endpointCode" label="端点" min-width="120" show-overflow-tooltip />
+        <el-table-column label="执行方式" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.readonly ? 'success' : 'warning'" effect="plain">
+              {{ row.readonly ? '服务端只读' : '前端执行' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="pickEndpoint(row)">选用</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!endpointPickerLoading && !registeredEndpoints.length"
+                description="没有可用的注册端点" :image-size="60" />
+      <template #footer>
+        <el-button @click="endpointPickerVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -518,9 +576,11 @@ import {
   agentApi,
   type AgentDefinitionView,
   type AgentSkillBindingView,
-  type AgentToolView
+  type AgentToolView,
+  type ToolDefinitionView
 } from '../api/agent'
-import http, { errorText } from '../api/client'
+import { errorText } from '../api/client'
+import { integrationApi, type ExternalToolDescriptor } from '../api/integration'
 import { useAuthStore } from '../stores/auth'
 import SchemaFieldEditor from '../components/agent/SchemaFieldEditor.vue'
 import {
@@ -556,7 +616,9 @@ const PAGE_OPTIONS = [
   { value: 'workflow/forms', label: '流程表单列表' },
   { value: 'workflow/forms/design', label: '表单设计' },
   { value: 'workflow/lab', label: '流程演练' },
-  { value: 'agent/config', label: '智能体配置' }
+  { value: 'agent/config', label: '智能体配置' },
+  { value: 'agent/observe', label: '智能体观测' },
+  { value: 'integration/services', label: '外部服务' }
 ]
 
 const auth = useAuthStore()
@@ -625,17 +687,31 @@ const skillAgentId = ref<number | null>(null)
 
 const toolDirVisible = ref(false)
 const toolDirLoading = ref(false)
-const toolDirectory = ref<any[]>([])
+const toolDirectoryRaw = ref<ToolDefinitionView[]>([])
+/** 新版目录由服务端分页；旧版数组响应在前端切片，分页控件保持一致。 */
+const toolDirServerPaged = ref(true)
+const toolDirGroup = ref('')
+const toolDirKeyword = ref('')
+const toolDirPage = ref(1)
+const toolDirSize = ref(20)
+const toolDirTotal = ref(0)
+const toolDirGroups = ref<string[]>([])
+const toolDirectory = computed(() => {
+  if (toolDirServerPaged.value) return toolDirectoryRaw.value
+  const start = (toolDirPage.value - 1) * toolDirSize.value
+  return toolDirectoryRaw.value.slice(start, start + toolDirSize.value)
+})
+
 const toolFormVisible = ref(false)
 const toolSaving = ref(false)
 const toolEditing = ref<string | null>(null)
-const platformTools = ref<any[]>([])
 const schemaMode = ref<'visual' | 'json'>('visual')
 const schemaParams = ref<SchemaNode[]>([])
 const toolForm = reactive({
   toolCode: '',
   name: '',
   description: '',
+  groupName: '',
   toolType: 'EXTERNAL',
   url: '',
   method: 'POST',
@@ -644,7 +720,26 @@ const toolForm = reactive({
   riskLevel: 'WRITE',
   minApproval: 'ALLOW',
   defaultApproval: 'ALLOW',
-  paramsText: '{\n  "type": "object",\n  "properties": {}\n}'
+  paramsText: '{\n  "type": "object",\n  "properties": {}\n}',
+  config: {} as Record<string, any>
+})
+
+/** 注册端点选用（子弹窗）：与 toolForm 分开，避免污染未保存的表单。 */
+const endpointPickerVisible = ref(false)
+const endpointPickerLoading = ref(false)
+const endpointPickerKeyword = ref('')
+const registeredEndpoints = ref<ExternalToolDescriptor[]>([])
+const filteredRegisteredEndpoints = computed(() => {
+  const kw = endpointPickerKeyword.value.trim().toLowerCase()
+  if (!kw) return registeredEndpoints.value
+  return registeredEndpoints.value.filter((item) =>
+    [item.code, item.name, item.serviceCode, item.endpointCode, item.description]
+      .some((value) => String(value || '').toLowerCase().includes(kw)))
+})
+const pickedEndpointSummary = computed(() => {
+  const config = toolForm.config || {}
+  if (config.source !== 'ENDPOINT' || !config.endpointCode) return ''
+  return `${config.serviceCode || ''} / ${config.endpointCode}`
 })
 
 onMounted(load)
@@ -932,8 +1027,38 @@ async function openToolDirectory() {
 async function refreshToolDirectory() {
   toolDirLoading.value = true
   try {
-    const { data } = await agentApi.toolDirectory()
-    toolDirectory.value = data
+    const { data } = await agentApi.toolDirectory({
+      group: toolDirGroup.value || undefined,
+      keyword: toolDirKeyword.value || undefined,
+      page: toolDirPage.value,
+      size: toolDirSize.value
+    })
+    if (Array.isArray(data)) {
+      // 兼容旧接口：一次返回全部，分组从全量提取，筛选与分页都在前端完成
+      toolDirServerPaged.value = false
+      const groups = new Set<string>()
+      for (const item of data) {
+        if (item.groupName) groups.add(item.groupName)
+      }
+      toolDirGroups.value = Array.from(groups)
+      let source = data
+      if (toolDirGroup.value) {
+        source = source.filter((item) => item.groupName === toolDirGroup.value)
+      }
+      if (toolDirKeyword.value) {
+        const kw = toolDirKeyword.value.trim().toLowerCase()
+        source = source.filter((item) =>
+          [item.toolCode, item.name, item.groupName]
+            .some((value) => String(value || '').toLowerCase().includes(kw)))
+      }
+      toolDirectoryRaw.value = source
+      toolDirTotal.value = source.length
+    } else {
+      toolDirServerPaged.value = true
+      toolDirectoryRaw.value = data.items || []
+      toolDirTotal.value = Number(data.total || 0)
+      toolDirGroups.value = data.groups || []
+    }
   } catch (error) {
     ElMessage.error(errorText(error))
   } finally {
@@ -941,22 +1066,74 @@ async function refreshToolDirectory() {
   }
 }
 
-async function loadPlatformTools() {
+function searchToolDirectory() {
+  toolDirPage.value = 1
+  void refreshToolDirectory()
+}
+
+function resetToolDirectory() {
+  toolDirGroup.value = ''
+  toolDirKeyword.value = ''
+  toolDirPage.value = 1
+  void refreshToolDirectory()
+}
+
+/** 换每页条数时回到第一页，避免停留在超出范围的页码。 */
+function onToolDirSizeChange() {
+  toolDirPage.value = 1
+  void refreshToolDirectory()
+}
+
+async function loadRegisteredEndpoints() {
+  endpointPickerLoading.value = true
   try {
-    const { data } = await http.get('/api/integration/proxy/services')
-    platformTools.value = Array.isArray(data) ? data : []
-  } catch {
-    platformTools.value = []
+    const { data } = await integrationApi.registeredServices()
+    registeredEndpoints.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    registeredEndpoints.value = []
+    ElMessage.error(errorText(error))
+  } finally {
+    endpointPickerLoading.value = false
   }
 }
 
+function openEndpointPicker() {
+  endpointPickerKeyword.value = ''
+  endpointPickerVisible.value = true
+  void loadRegisteredEndpoints()
+}
+
+/** 选用只回填表单：端点字段落到 config，保存时随 payload 一起提交。 */
+function pickEndpoint(row: ExternalToolDescriptor) {
+  const schema = row.paramsSchema || { type: 'object', properties: {} }
+  toolForm.toolCode = row.code
+  toolForm.name = row.name
+  toolForm.description = row.description || ''
+  // 只读端点由服务端网关执行；有副作用端点才由前端执行
+  toolForm.toolType = row.readonly ? 'CUSTOM_INTERNAL' : 'EXTERNAL'
+  toolForm.pages = [...(row.pages || [])]
+  toolForm.permissionCode = row.permissionCode || ''
+  toolForm.config = {
+    serviceCode: row.serviceCode,
+    endpointCode: row.endpointCode,
+    source: 'ENDPOINT'
+  }
+  toolForm.paramsText = JSON.stringify(schema, null, 2)
+  syncingSchema = true
+  schemaMode.value = schemaFitsVisual(schema) ? 'visual' : 'json'
+  schemaParams.value = schemaToNodes(schema)
+  void nextTick(() => { syncingSchema = false })
+  endpointPickerVisible.value = false
+  ElMessage.success('已回填端点字段')
+}
+
 function openCreateTool() {
-  void loadPlatformTools()
   toolEditing.value = null
   Object.assign(toolForm, {
     toolCode: '',
     name: '',
     description: '',
+    groupName: '',
     toolType: 'EXTERNAL',
     url: '',
     method: 'POST',
@@ -965,21 +1142,22 @@ function openCreateTool() {
     riskLevel: 'WRITE',
     minApproval: 'ALLOW',
     defaultApproval: 'ALLOW',
-    paramsText: '{\n  "type": "object",\n  "properties": {}\n}'
+    paramsText: '{\n  "type": "object",\n  "properties": {}\n}',
+    config: {}
   })
   schemaMode.value = 'visual'
   schemaParams.value = []
   toolFormVisible.value = true
 }
 
-function editTool(row: any) {
-  void loadPlatformTools()
+function editTool(row: ToolDefinitionView) {
   toolEditing.value = row.toolCode
   const schema = row.paramsSchema || { type: 'object', properties: {} }
   Object.assign(toolForm, {
     toolCode: row.toolCode,
     name: row.name,
     description: row.description || '',
+    groupName: row.groupName || '',
     toolType: row.toolType,
     url: row.config?.url || '',
     method: row.config?.method || 'POST',
@@ -988,7 +1166,8 @@ function editTool(row: any) {
     riskLevel: row.riskLevel,
     minApproval: row.minApproval,
     defaultApproval: row.defaultApproval,
-    paramsText: JSON.stringify(schema, null, 2)
+    paramsText: JSON.stringify(schema, null, 2),
+    config: { ...(row.config || {}) }
   })
   schemaParams.value = schemaToNodes(schema)
   // 嵌套结构在可视化模式里表达不了，直接落到 JSON，避免保存时丢字段
@@ -1036,10 +1215,19 @@ async function saveTool() {
       return
     }
   }
+  // 端点选用回填的 config 要随保存提交；内部 HTTP 类型则按 url/method 重建
+  const config: Record<string, any> = { ...(toolForm.config || {}) }
+  if (toolForm.toolType === 'CUSTOM_INTERNAL' && !pickedEndpointSummary.value) {
+    delete config.serviceCode
+    delete config.endpointCode
+    delete config.source
+    Object.assign(config, { url: toolForm.url.trim(), method: toolForm.method })
+  }
   const payload = {
     toolCode: toolForm.toolCode.trim(),
     name: toolForm.name.trim(),
     description: toolForm.description.trim(),
+    groupName: toolForm.groupName.trim() || undefined,
     toolType: toolForm.toolType,
     pages: toolForm.pages,
     permissionCode: toolForm.permissionCode.trim() || undefined,
@@ -1047,11 +1235,9 @@ async function saveTool() {
     minApproval: toolForm.minApproval,
     defaultApproval: toolForm.defaultApproval,
     paramsSchema,
-    config: toolForm.toolType === 'CUSTOM_INTERNAL'
-      ? { url: toolForm.url.trim(), method: toolForm.method }
-      : {}
+    config
   }
-  if (toolForm.toolType === 'CUSTOM_INTERNAL' && !toolForm.url.trim()) {
+  if (toolForm.toolType === 'CUSTOM_INTERNAL' && !pickedEndpointSummary.value && !toolForm.url.trim()) {
     ElMessage.warning('内部 HTTP 工具必须填写 URL')
     return
   }
@@ -1151,6 +1337,16 @@ function toolTypeTag(type: string): 'warning' | 'success' | 'info' {
   return 'info'
 }
 
+function sourceText(source?: string) {
+  return ({ BUILTIN: '内置', ENDPOINT: '端点', MANUAL: '手工' } as Record<string, string>)[source || ''] || '手工'
+}
+
+function sourceTag(source?: string): 'info' | 'success' | 'warning' {
+  if (source === 'ENDPOINT') return 'success'
+  if (source === 'BUILTIN') return 'info'
+  return 'warning'
+}
+
 function approvalText(value: string) {
   return ({ ALLOW: '直接执行', ASK: '需确认', DENY: '禁用', INHERIT: '跟随默认' } as Record<string, string>)[value] || value
 }
@@ -1188,5 +1384,18 @@ function approvalText(value: string) {
   gap: 8px;
   margin-bottom: 10px;
   flex-wrap: wrap;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.toolbar .spacer { flex: 1; }
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 </style>

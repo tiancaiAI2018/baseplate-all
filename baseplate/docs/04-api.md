@@ -174,6 +174,19 @@
 | GET | `/openapi/v1/userinfo` | **`USER`** | 返回被代理用户身份与角色；机器令牌 → `403 SUBJECT_REQUIRED` |
 | POST | `/openapi/v1/echo` | `CLIENT` | 回显 + 幂等示例（`Idempotency-Key`） |
 
+### 对外开放的智能体接口
+
+以下接口同样是开放 API（签名 + 开放令牌），`subject=USER`，只认授权码换来的带 uid 令牌。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | `/openapi/agent/chat/stream` | `agent:chat` | SSE 对话；body `{agentCode, pageKey, sessionId, message}` |
+| GET | `/openapi/agent/chat/bootstrap` | `agent:chat` | 判断指定页面的 Agent 是否启用 |
+| GET | `/openapi/agent/sessions` | `agent:session:view` | 会话列表 |
+| GET | `/openapi/agent/sessions/{id}/messages` | `agent:session:view` | 会话消息 |
+| POST | `/openapi/agent/external-calls/{callId}/result` | `agent:chat` | 外部工具结果回传，返回 SSE 恢复模型 |
+| POST | `/openapi/integration/proxy/{serviceCode}/{endpointCode}` | `agent:chat` | 开放平台外部工具执行，服务端网关注入第三方凭证 |
+
 ---
 
 ## 十二、工作流 `/api/workflow`
@@ -389,10 +402,32 @@ Schema 有字段白名单，禁 `script` / `expression` 类键。
 | DELETE | `/api/agent/skills/{skillName}` | `agent:config:edit` | 删除（含索引） |
 | POST | `/api/agent/skills/upload` | `agent:config:edit` | zip 导入（可含多个技能目录） |
 | POST | `/api/agent/skills/upload-folder` | `agent:config:edit` | 文件夹导入 |
-| GET | `/api/agent/tools/directory` | `agent:config:view` | 工具目录（代码声明 + 库内自定义） |
+| GET | `/api/agent/tools/directory` | `agent:config:view` | 工具目录；支持 `group` / `keyword` / `page` / `size`，返回 `{items,total,groups}`（不带筛选参数时为旧数组） |
 | POST | `/api/agent/tools/directory` | `agent:config:edit` | 新增自定义工具 |
 | PUT | `/api/agent/tools/directory/{toolCode}` | `agent:config:edit` | 修改 |
 | DELETE | `/api/agent/tools/directory/{toolCode}` | `agent:config:edit` | 删除 |
+
+工具表 `agent_tool_definition` 有 `group_name` 分组字段；从注册端点创建的工具 `config` 带
+`{serviceCode,endpointCode,source:"ENDPOINT"}`，只读端点由服务端网关注入凭证执行，有副作用端点由前端经 BFF 代理执行。
+平台注册端点**不会自动投影成工具**，需要在「新建外部工具」里点「从注册端点选用」显式创建。
+
+### 外部服务目录 `/api/integration/admin`
+
+平台注册的服务与端点已落库（`platform_external_service` / `platform_external_endpoint`），
+端点是「可选用目录」，凭证只进不出（页面不回显，编辑时留空保持旧值）。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/integration/admin/services` | `integration:service:view` | 服务 + 端点列表（含 `credentialConfigured`） |
+| POST | `/api/integration/admin/services` | `integration:service:edit` | 新建服务 |
+| PUT | `/api/integration/admin/services/{code}` | `integration:service:edit` | 编辑服务（凭证/静态头留空保持旧值） |
+| DELETE | `/api/integration/admin/services/{code}` | `integration:service:edit` | 删除服务 |
+| POST | `/api/integration/admin/services/{code}/endpoints` | `integration:service:edit` | 新建端点 |
+| PUT | `/api/integration/admin/services/{code}/endpoints/{endpointCode}` | `integration:service:edit` | 编辑端点 |
+| DELETE | `/api/integration/admin/services/{code}/endpoints/{endpointCode}` | `integration:service:edit` | 删除端点 |
+| GET | `/api/integration/proxy/services` | — | 端点投影清单，供「从注册端点选用」回填表单 |
+
+写操作后立即刷新注册表，网关调用随即生效。`status` 取 `ACTIVE` / `DISABLED`；`authType` 取 `NONE` / `API_KEY` / `BEARER`。
 
 ### SSE 事件
 
